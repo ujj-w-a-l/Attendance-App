@@ -1,0 +1,5 @@
+{
+  "name": "ClassTrack Attendance",
+  "description": "A professional attendance management system for teachers with CSV import/export and class organization.",
+  "requestFramePermissions": []
+}
