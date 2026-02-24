@@ -5,6 +5,7 @@ import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { CheckCircle2, XCircle, Download, Calendar as CalendarIcon, MessageSquare, CheckSquare, Square, ArrowUpDown, X, ListChecks } from 'lucide-react';
 import Papa from 'papaparse';
 import { motion, AnimatePresence } from 'motion/react';
+import { exportCsvFile } from '../native-utils';
 
 interface AttendanceSheetProps {
   cls: Class;
@@ -101,15 +102,7 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({ cls }) => {
     });
 
     const csv = Papa.unparse(csvData);
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `attendance_${cls.name}_${exportStartDate}_to_${exportEndDate}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    await exportCsvFile(`attendance_${cls.name}_${exportStartDate}_to_${exportEndDate}.csv`, csv);
     setIsExportModalOpen(false);
   };
 

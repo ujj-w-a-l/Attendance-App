@@ -7,6 +7,7 @@ import Papa from 'papaparse';
 import { ConfirmDialog } from './ConfirmDialog';
 import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
+import { exportCsvFile } from '../native-utils';
 
 interface ClassDetailProps {
   cls: Class;
@@ -64,15 +65,7 @@ export const ClassDetail: React.FC<ClassDetailProps> = ({ cls, onTakeAttendance 
     });
 
     const csv = Papa.unparse(csvData);
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `attendance_${cls.name}_${exportStartDate}_to_${exportEndDate}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    await exportCsvFile(`attendance_${cls.name}_${exportStartDate}_to_${exportEndDate}.csv`, csv);
     setIsExportModalOpen(false);
   };
 

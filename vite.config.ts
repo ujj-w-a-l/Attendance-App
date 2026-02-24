@@ -15,10 +15,23 @@ export default defineConfig(({mode}) => {
         '@': path.resolve(__dirname, '.'),
       },
     },
+    build: {
+      outDir: 'dist',
+      // Ensure WASM files are not inlined so they can be fetched separately
+      assetsInlineLimit: 0,
+    },
+    optimizeDeps: {
+      exclude: ['sql.js'],
+    },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
+      // Do not modify -- file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
+      headers: {
+        // Required for SharedArrayBuffer used by sql.js
+        'Cross-Origin-Opener-Policy': 'same-origin',
+        'Cross-Origin-Embedder-Policy': 'require-corp',
+      },
     },
   };
 });
