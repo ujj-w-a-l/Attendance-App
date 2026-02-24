@@ -1,98 +1,111 @@
-import { Class, Student, AttendanceRecord, ExportData } from "./types";
+import { Class, Student, AttendanceRecord, ExportData } from './types';
+import * as db from './db';
+import { performDriveSync } from './google-drive-service';
 
+/**
+ * API layer that provides the same interface as the original HTTP-based API,
+ * but uses the local SQLite database (sql.js) instead of server calls.
+ * This makes the app fully offline-capable on Android.
+ */
 export const api = {
   getClasses: async (): Promise<Class[]> => {
-    const res = await fetch("/api/classes");
-    return res.json();
+    return db.getAllClasses();
   },
+
   addClass: async (name: string): Promise<Class> => {
-    const res = await fetch("/api/classes", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
-    });
-    return res.json();
+    const cls = db.addClass(name);
+    await db.persist();
+    return cls;
   },
+
   deleteClass: async (id: number): Promise<void> => {
-    await fetch(`/api/classes/${id}`, { method: "DELETE" });
+    db.deleteClass(id);
+    await db.persist();
   },
+
   getStudents: async (classId: number): Promise<Student[]> => {
-    const res = await fetch(`/api/classes/${classId}/students`);
-    return res.json();
+    return db.getStudentsByClass(classId);
   },
+
   addStudent: async (classId: number, name: string): Promise<Student> => {
-    const res = await fetch(`/api/classes/${classId}/students`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
-    });
-    return res.json();
+    const student = db.addStudent(classId, name);
+    await db.persist();
+    return student;
   },
+
   addStudentsBulk: async (classId: number, students: string[]): Promise<void> => {
-    await fetch(`/api/classes/${classId}/students/bulk`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ students }),
-    });
+    db.addStudentsBulk(classId, students);
+    await db.persist();
   },
+
   deleteStudent: async (id: number): Promise<void> => {
-    await fetch(`/api/students/${id}`, { method: "DELETE" });
+    db.deleteStudent(id);
+    await db.persist();
   },
+
   deleteStudentsBulk: async (ids: number[]): Promise<void> => {
-    await fetch(`/api/students/bulk-delete`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids }),
-    });
+    db.deleteStudentsBulk(ids);
+    await db.persist();
   },
+
   getStudentHistory: async (studentId: number): Promise<AttendanceRecord[]> => {
-    const res = await fetch(`/api/students/${studentId}/attendance`);
-    return res.json();
+    return db.getStudentHistory(studentId) as AttendanceRecord[];
   },
+
   getAttendance: async (classId: number, date: string): Promise<AttendanceRecord[]> => {
-    const res = await fetch(`/api/classes/${classId}/attendance?date=${date}`);
-    return res.json();
+    return db.getAttendanceByClassAndDate(classId, date) as AttendanceRecord[];
   },
-  saveAttendance: async (student_id: number, date: string, status: 'present' | 'absent', notes?: string): Promise<void> => {
-    await fetch("/api/attendance", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ student_id, date, status, notes }),
-    });
+
+  saveAttendance: async (
+    student_id: number,
+    date: string,
+    status: 'present' | 'absent',
+    notes?: string
+  ): Promise<void> => {
+    db.saveAttendance(student_id, date, status, notes);
+    await db.persist();
+    // Trigger background sync (non-blocking)
+    performDriveSync().catch(() => {});
   },
+
   saveAttendanceBulk: async (records: AttendanceRecord[]): Promise<void> => {
-    await fetch("/api/attendance/bulk", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ records }),
-    });
+    db.saveAttendanceBulk(records);
+    await db.persist();
+    // Trigger background sync (non-blocking)
+    performDriveSync().catch(() => {});
   },
-  getExportData: async (classId: number, startDate?: string, endDate?: string): Promise<ExportData> => {
-    const params = new URLSearchParams();
-    if (startDate) params.append('startDate', startDate);
-    if (endDate) params.append('endDate', endDate);
-    const qs = params.toString() ? `?${params.toString()}` : '';
-    const res = await fetch(`/api/export/${classId}${qs}`);
-    return res.json();
+
+  getExportData: async (
+    classId: number,
+    startDate?: string,
+    endDate?: string
+  ): Promise<ExportData> => {
+    return db.getExportData(classId, startDate, endDate);
   },
+
+  // Auth methods now use local settings + Google Auth plugin
   getAuthStatus: async (): Promise<{ authenticated: boolean }> => {
-    const res = await fetch('/api/auth/status');
-    return res.json();
+    const tokens = db.getSetting('google_tokens');
+    return { authenticated: !!tokens };
   },
+
   getAuthUrl: async (): Promise<{ url: string }> => {
-    const res = await fetch('/api/auth/url');
-    return res.json();
+    // Not used in Android - native Google Sign-In handles this
+    return { url: '' };
   },
+
   disconnectAuth: async (): Promise<{ success: boolean }> => {
-    const res = await fetch('/api/auth/disconnect', { method: 'POST' });
-    return res.json();
+    db.deleteSetting('google_tokens');
+    await db.persist();
+    return { success: true };
   },
+
   syncToDrive: async (): Promise<{ success: boolean }> => {
-    const res = await fetch('/api/sync', { method: 'POST' });
-    if (!res.ok) {
-      const error = await res.json();
-      throw new Error(error.error || 'Failed to sync');
+    const tokens = db.getSetting('google_tokens');
+    if (!tokens) {
+      throw new Error('Not authenticated with Google');
     }
-    return res.json();
-  }
+    await performDriveSync();
+    return { success: true };
+  },
 };

@@ -4,6 +4,9 @@ import { Plus, Users, Trash2, Cloud, CloudOff, RefreshCw } from 'lucide-react';
 import { motion } from 'motion/react';
 import { ConfirmDialog } from './ConfirmDialog';
 import { api } from '../api';
+import { isNativePlatform, showToast } from '../native-utils';
+import * as db from '../db';
+import { GoogleAuth } from '@codetrix-studio/capacitor-google-auth';
 
 interface ClassListProps {
   classes: Class[];
@@ -16,25 +19,13 @@ export const ClassList: React.FC<ClassListProps> = ({ classes, onSelectClass, on
   const [isAdding, setIsAdding] = useState(false);
   const [newClassName, setNewClassName] = useState('');
   const [classToDelete, setClassToDelete] = useState<Class | null>(null);
-  
+
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
 
   useEffect(() => {
     checkAuthStatus();
-    
-    const handleMessage = (event: MessageEvent) => {
-      const origin = event.origin;
-      if (!origin.endsWith('.run.app') && !origin.includes('localhost')) {
-        return;
-      }
-      if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
-        checkAuthStatus();
-      }
-    };
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
   }, []);
 
   const checkAuthStatus = async () => {
@@ -48,21 +39,73 @@ export const ClassList: React.FC<ClassListProps> = ({ classes, onSelectClass, on
 
   const handleConnect = async () => {
     try {
-      const { url } = await api.getAuthUrl();
-      const authWindow = window.open(url, 'oauth_popup', 'width=600,height=700');
-      if (!authWindow) {
-        alert('Please allow popups for this site to connect your Google account.');
+      if (isNativePlatform()) {
+        // Use native Google Sign-In on Android
+        const user = await GoogleAuth.signIn();
+        if (user && user.authentication) {
+          // Store the tokens for Drive API access
+          const tokens = {
+            access_token: user.authentication.accessToken,
+            id_token: user.authentication.idToken,
+            refresh_token: user.authentication.refreshToken || null,
+          };
+          db.setSetting('google_tokens', JSON.stringify(tokens));
+          await db.persist();
+          setIsAuthenticated(true);
+          await showToast('Connected to Google Drive');
+        }
+      } else {
+        // Web fallback: use the Google Identity Services popup
+        const clientId = (window as any).__GOOGLE_CLIENT_ID__;
+        if (!clientId) {
+          alert('Google Client ID not configured. Please set VITE_GOOGLE_CLIENT_ID in your environment.');
+          return;
+        }
+
+        const tokenClient = (window as any).google?.accounts?.oauth2?.initTokenClient({
+          client_id: clientId,
+          scope: 'https://www.googleapis.com/auth/drive.file',
+          callback: async (response: any) => {
+            if (response.access_token) {
+              const tokens = { access_token: response.access_token };
+              db.setSetting('google_tokens', JSON.stringify(tokens));
+              await db.persist();
+              setIsAuthenticated(true);
+            }
+          },
+        });
+
+        if (tokenClient) {
+          tokenClient.requestAccessToken();
+        } else {
+          alert('Google Identity Services not loaded. Please check your internet connection.');
+        }
       }
-    } catch (error) {
-      console.error('OAuth error:', error);
-      alert('Failed to initiate Google connection. Please check your credentials.');
+    } catch (error: any) {
+      console.error('Google Sign-In error:', error);
+      const message = error?.message || 'Failed to connect to Google. Please try again.';
+      if (isNativePlatform()) {
+        await showToast(message, 'long');
+      } else {
+        alert(message);
+      }
     }
   };
 
   const handleDisconnect = async () => {
     try {
+      if (isNativePlatform()) {
+        try {
+          await GoogleAuth.signOut();
+        } catch {
+          // Ignore sign-out errors
+        }
+      }
       await api.disconnectAuth();
       setIsAuthenticated(false);
+      if (isNativePlatform()) {
+        await showToast('Disconnected from Google Drive');
+      }
     } catch (error) {
       console.error("Failed to disconnect", error);
     }
@@ -74,10 +117,17 @@ export const ClassList: React.FC<ClassListProps> = ({ classes, onSelectClass, on
     try {
       await api.syncToDrive();
       setSyncMessage('Synced successfully!');
+      if (isNativePlatform()) {
+        await showToast('Synced to Google Drive');
+      }
       setTimeout(() => setSyncMessage(''), 3000);
     } catch (error: any) {
       console.error("Sync failed", error);
-      setSyncMessage(error.message || 'Sync failed');
+      const msg = error.message || 'Sync failed';
+      setSyncMessage(msg);
+      if (msg.includes('expired') || msg.includes('authentication')) {
+        setIsAuthenticated(false);
+      }
       setTimeout(() => setSyncMessage(''), 3000);
     } finally {
       setIsSyncing(false);
