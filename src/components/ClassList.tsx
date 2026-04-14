@@ -11,7 +11,7 @@ import { GoogleAuth } from '@codetrix-studio/capacitor-google-auth';
 interface ClassListProps {
   classes: Class[];
   onSelectClass: (cls: Class) => void;
-  onAddClass: (name: string) => void;
+  onAddClass: (name: string) => void | Promise<void>;
   onDeleteClass: (id: number) => void;
 }
 
@@ -134,12 +134,22 @@ export const ClassList: React.FC<ClassListProps> = ({ classes, onSelectClass, on
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (newClassName.trim()) {
-      onAddClass(newClassName.trim());
+    const name = newClassName.trim();
+    if (!name) return;
+    try {
+      await onAddClass(name);
       setNewClassName('');
       setIsAdding(false);
+    } catch (error: any) {
+      console.error('Failed to add class:', error);
+      const message = error?.message || 'Failed to add class. Please try again.';
+      if (isNativePlatform()) {
+        await showToast(message, 'long');
+      } else {
+        alert(message);
+      }
     }
   };
 

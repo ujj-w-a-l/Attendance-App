@@ -42,14 +42,18 @@ async function saveToIndexedDB(): Promise<void> {
   return new Promise((resolve, reject) => {
     const tx = idb.transaction(DB_STORE, 'readwrite');
     const store = tx.objectStore(DB_STORE);
-    const request = store.put(data.buffer, DB_KEY);
+    // Store the Uint8Array directly. Passing `data.buffer` (a raw ArrayBuffer
+    // backed by WASM memory) is unreliable on Android WebView IndexedDB.
+    const request = store.put(data, DB_KEY);
     request.onsuccess = () => {
       idb.close();
       resolve();
     };
     request.onerror = () => {
+      const err = request.error;
       idb.close();
-      reject(request.error);
+      console.error('IndexedDB write failed:', err);
+      reject(err);
     };
   });
 }
