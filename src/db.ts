@@ -58,14 +58,38 @@ async function saveToIndexedDB(): Promise<void> {
   });
 }
 
+async function deleteFromIndexedDB(): Promise<void> {
+  const idb = await openIndexedDB();
+  return new Promise((resolve, reject) => {
+    const tx = idb.transaction(DB_STORE, 'readwrite');
+    const store = tx.objectStore(DB_STORE);
+    const request = store.delete(DB_KEY);
+    request.onsuccess = () => { idb.close(); resolve(); };
+    request.onerror = () => { idb.close(); reject(request.error); };
+  });
+}
+
 export async function initDatabase(): Promise<void> {
   const SQL = await initSqlJs({
     locateFile: (file: string) => `/${file}`,
   });
 
-  const savedData = await loadFromIndexedDB();
-  if (savedData) {
-    db = new SQL.Database(savedData);
+  let savedData: Uint8Array | null = null;
+  try {
+    savedData = await loadFromIndexedDB();
+  } catch (err) {
+    console.error('IndexedDB load failed, starting fresh:', err);
+  }
+
+  if (savedData && savedData.byteLength > 0) {
+    try {
+      db = new SQL.Database(savedData);
+    } catch (err) {
+      // Corrupt bytes stored by a prior buggy version — discard and start fresh.
+      console.error('Saved database is corrupt, resetting:', err);
+      try { await deleteFromIndexedDB(); } catch {}
+      db = new SQL.Database();
+    }
   } else {
     db = new SQL.Database();
   }

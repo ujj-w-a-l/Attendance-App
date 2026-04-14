@@ -13,7 +13,8 @@ function Root() {
       .then(() => setDbReady(true))
       .catch((err) => {
         console.error('Failed to initialize database:', err);
-        setError('Failed to initialize the database. Please restart the app.');
+        const detail = err?.message || String(err);
+        setError(`Failed to initialize the database. Please restart the app.\n\nDetails: ${detail}`);
       });
   }, []);
 
@@ -32,7 +33,7 @@ function Root() {
           <p style={{ fontSize: '1.25rem', fontWeight: 600, color: '#dc2626', marginBottom: '0.5rem' }}>
             Initialization Error
           </p>
-          <p style={{ color: '#6b7280' }}>{error}</p>
+          <p style={{ color: '#6b7280', whiteSpace: 'pre-wrap' }}>{error}</p>
         </div>
       </div>
     );
