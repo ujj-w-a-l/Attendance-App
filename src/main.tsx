@@ -1,7 +1,7 @@
 import { StrictMode, useState, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
-import { initDatabase } from './db';
+import { initDatabase, resetDatabase } from './db';
 import './index.css';
 
 function Root() {
@@ -29,11 +29,32 @@ function Root() {
         textAlign: 'center',
         fontFamily: 'system-ui, sans-serif',
       }}>
-        <div>
+        <div style={{ maxWidth: '32rem' }}>
           <p style={{ fontSize: '1.25rem', fontWeight: 600, color: '#dc2626', marginBottom: '0.5rem' }}>
             Initialization Error
           </p>
-          <p style={{ color: '#6b7280', whiteSpace: 'pre-wrap' }}>{error}</p>
+          <p style={{ color: '#6b7280', whiteSpace: 'pre-wrap', marginBottom: '1.25rem' }}>{error}</p>
+          <button
+            onClick={async () => {
+              try {
+                await resetDatabase();
+                window.location.reload();
+              } catch (e) {
+                setError(`Reset failed: ${String((e as any)?.message || e)}`);
+              }
+            }}
+            style={{
+              background: '#6366f1',
+              color: 'white',
+              border: 'none',
+              padding: '0.75rem 1.5rem',
+              borderRadius: '0.75rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+          >
+            Reset Database & Retry
+          </button>
         </div>
       </div>
     );

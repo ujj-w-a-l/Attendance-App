@@ -1,4 +1,9 @@
 import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
+// Use Vite's ?url import so the WASM is emitted as a properly hashed asset
+// and served from a URL that works regardless of host/origin. This avoids
+// relying on a bare "/sql-wasm.wasm" path resolving correctly in the
+// Capacitor WebView.
+import sqlWasmUrl from 'sql.js/dist/sql-wasm.wasm?url';
 
 const DB_NAME = 'classtrack_attendance';
 const DB_STORE = 'database';
@@ -70,9 +75,25 @@ async function deleteFromIndexedDB(): Promise<void> {
 }
 
 export async function initDatabase(): Promise<void> {
-  const SQL = await initSqlJs({
-    locateFile: (file: string) => `/${file}`,
-  });
+  // sql.js's built-in WASM fetcher fails inside the Android WebView with
+  // "both async and sync fetching of the wasm failed" because Capacitor
+  // serves .wasm with a MIME type that breaks both `instantiateStreaming`
+  // and its XHR fallback. Fetch the bytes ourselves and hand them to
+  // initSqlJs via `wasmBinary`, which skips sql.js's fetcher entirely.
+  let wasmBinary: ArrayBuffer;
+  try {
+    const resp = await fetch(sqlWasmUrl);
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status} fetching ${sqlWasmUrl}`);
+    }
+    wasmBinary = await resp.arrayBuffer();
+  } catch (err: any) {
+    throw new Error(
+      `Could not load SQLite WASM (${sqlWasmUrl}): ${err?.message || String(err)}`
+    );
+  }
+
+  const SQL = await initSqlJs({ wasmBinary });
 
   let savedData: Uint8Array | null = null;
   try {
@@ -137,6 +158,20 @@ export async function initDatabase(): Promise<void> {
 }
 
 /** Persist the database to IndexedDB after write operations */
+/** Wipe the persisted database entirely (used by the Reset button on errors). */
+export async function resetDatabase(): Promise<void> {
+  try { await deleteFromIndexedDB(); } catch {}
+  // Best-effort: also drop the whole IndexedDB database so nothing lingers.
+  try {
+    await new Promise<void>((resolve) => {
+      const req = indexedDB.deleteDatabase(DB_NAME);
+      req.onsuccess = () => resolve();
+      req.onerror = () => resolve();
+      req.onblocked = () => resolve();
+    });
+  } catch {}
+}
+
 export async function persist(): Promise<void> {
   await saveToIndexedDB();
 }
