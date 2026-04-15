@@ -19,6 +19,21 @@ export default defineConfig(({mode}) => {
       outDir: 'dist',
       // Ensure WASM files are not inlined so they can be fetched separately
       assetsInlineLimit: 0,
+      rollupOptions: {
+        output: {
+          // Put sql.js in its own chunk. Otherwise esbuild's minifier
+          // reuses short module-scope variable names (xs, $t, Yt, nl, …)
+          // between React and sql.js's emscripten runtime, and one side
+          // silently overwrites the other's globals. On Android that
+          // corrupts sql.js's parameter binding (strings bind as NULL,
+          // triggering "NOT NULL constraint failed").
+          manualChunks(id) {
+            if (id.includes('/sql.js/') || id.includes('\\sql.js\\')) {
+              return 'sql-js';
+            }
+          },
+        },
+      },
     },
     optimizeDeps: {
       exclude: ['sql.js'],

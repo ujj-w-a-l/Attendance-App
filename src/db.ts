@@ -182,6 +182,25 @@ export function getDb(): SqlJsDatabase {
   return db;
 }
 
+// Belt-and-suspenders helper: build INSERTs without sql.js string parameter
+// binding. sql.js's string-binding path (`on`/`$t`/`Yt`/`nl` helpers) can be
+// clobbered by esbuild minification name-collisions between React and the
+// emscripten runtime. Integer binding is fine, but string binding has been
+// observed to silently bind NULL ("NOT NULL constraint failed: classes.name"
+// on the first INSERT with a string value). Quoting the value inline avoids
+// the binding path entirely. All callers here pass trusted, user-supplied
+// strings that we escape the SQLite way (double single-quotes).
+function sqlStr(value: string | null | undefined): string {
+  if (value === null || value === undefined) return 'NULL';
+  return "'" + String(value).replace(/'/g, "''") + "'";
+}
+
+function sqlInt(value: number): string {
+  const n = Number(value);
+  if (!Number.isFinite(n)) throw new Error(`sqlInt: not a finite number (${value})`);
+  return String(Math.trunc(n));
+}
+
 // ─── Classes ────────────────────────────────────────────────────────────────
 
 export interface ClassRow {
@@ -201,9 +220,12 @@ export function getAllClasses(): ClassRow[] {
 }
 
 export function addClass(name: string): ClassRow {
-  getDb().run('INSERT INTO classes (name) VALUES (?)', [name]);
-  const id = getDb().exec('SELECT last_insert_rowid() as id')[0].values[0][0] as number;
-  return { id, name };
+  const trimmed = String(name ?? '').trim();
+  if (!trimmed) throw new Error('Class name cannot be empty');
+  const database = getDb();
+  database.exec(`INSERT INTO classes (name) VALUES (${sqlStr(trimmed)})`);
+  const id = database.exec('SELECT last_insert_rowid() as id')[0].values[0][0] as number;
+  return { id, name: trimmed };
 }
 
 export function deleteClass(id: number): void {
@@ -240,14 +262,25 @@ export function getStudentsByClass(classId: number): StudentRow[] {
 }
 
 export function addStudent(classId: number, name: string): StudentRow {
-  getDb().run('INSERT INTO students (class_id, name) VALUES (?, ?)', [classId, name]);
-  const id = getDb().exec('SELECT last_insert_rowid() as id')[0].values[0][0] as number;
-  return { id, class_id: classId, name };
+  const trimmed = String(name ?? '').trim();
+  if (!trimmed) throw new Error('Student name cannot be empty');
+  const database = getDb();
+  database.exec(
+    `INSERT INTO students (class_id, name) VALUES (${sqlInt(classId)}, ${sqlStr(trimmed)})`
+  );
+  const id = database.exec('SELECT last_insert_rowid() as id')[0].values[0][0] as number;
+  return { id, class_id: classId, name: trimmed };
 }
 
 export function addStudentsBulk(classId: number, names: string[]): void {
+  const cid = sqlInt(classId);
+  const database = getDb();
   for (const name of names) {
-    getDb().run('INSERT INTO students (class_id, name) VALUES (?, ?)', [classId, name]);
+    const trimmed = String(name ?? '').trim();
+    if (!trimmed) continue;
+    database.exec(
+      `INSERT INTO students (class_id, name) VALUES (${cid}, ${sqlStr(trimmed)})`
+    );
   }
 }
 
@@ -309,23 +342,22 @@ export function saveAttendance(
   status: string,
   notes?: string
 ): void {
-  getDb().run(
+  getDb().exec(
     `INSERT INTO attendance (student_id, date, status, notes)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT(student_id, date) DO UPDATE SET status = excluded.status, notes = excluded.notes`,
-    [studentId, date, status, notes || null]
+     VALUES (${sqlInt(studentId)}, ${sqlStr(date)}, ${sqlStr(status)}, ${sqlStr(notes ?? null)})
+     ON CONFLICT(student_id, date) DO UPDATE SET status = excluded.status, notes = excluded.notes`
   );
 }
 
 export function saveAttendanceBulk(
   records: { student_id: number; date: string; status: string; notes?: string }[]
 ): void {
+  const database = getDb();
   for (const record of records) {
-    getDb().run(
+    database.exec(
       `INSERT INTO attendance (student_id, date, status, notes)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(student_id, date) DO UPDATE SET status = excluded.status, notes = excluded.notes`,
-      [record.student_id, record.date, record.status, record.notes || null]
+       VALUES (${sqlInt(record.student_id)}, ${sqlStr(record.date)}, ${sqlStr(record.status)}, ${sqlStr(record.notes ?? null)})
+       ON CONFLICT(student_id, date) DO UPDATE SET status = excluded.status, notes = excluded.notes`
     );
   }
 }
@@ -385,7 +417,7 @@ export function getExportData(
 // ─── Settings ───────────────────────────────────────────────────────────────
 
 export function getSetting(key: string): string | null {
-  const result = getDb().exec('SELECT value FROM settings WHERE key = ?', [key]);
+  const result = getDb().exec(`SELECT value FROM settings WHERE key = ${sqlStr(key)}`);
   if (result.length > 0 && result[0].values.length > 0) {
     return result[0].values[0][0] as string;
   }
@@ -393,13 +425,12 @@ export function getSetting(key: string): string | null {
 }
 
 export function setSetting(key: string, value: string): void {
-  getDb().run(
-    `INSERT INTO settings (key, value) VALUES (?, ?)
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-    [key, value]
+  getDb().exec(
+    `INSERT INTO settings (key, value) VALUES (${sqlStr(key)}, ${sqlStr(value)})
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
   );
 }
 
 export function deleteSetting(key: string): void {
-  getDb().run('DELETE FROM settings WHERE key = ?', [key]);
+  getDb().exec(`DELETE FROM settings WHERE key = ${sqlStr(key)}`);
 }
