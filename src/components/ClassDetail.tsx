@@ -82,7 +82,7 @@ export const ClassDetail: React.FC<ClassDetailProps> = ({ cls, onTakeAttendance 
         return row;
       });
       const csv = Papa.unparse(csvData);
-      await exportCsvFile(`attendance_${cls.name}_${exportStartDate}_to_${exportEndDate}.csv`, csv);
+      await exportCsvFile(`${cls.name}_${exportStartDate}_to_${exportEndDate}.csv`, csv);
       setIsExportModalOpen(false);
       toast.success('Attendance exported successfully');
     } catch (error) {

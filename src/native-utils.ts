@@ -50,18 +50,45 @@ export async function exportCsvFile(
     } catch (error) {
       console.error('Export error:', error);
       // Fallback to web download
-      webDownload(fileName, csvContent);
+      await webDownload(fileName, csvContent);
     }
   } else {
-    webDownload(fileName, csvContent);
+    await webDownload(fileName, csvContent);
   }
 }
 
 /**
  * Web-based file download (fallback for non-native platforms).
  */
-function webDownload(fileName: string, content: string): void {
+async function webDownload(fileName: string, content: string): Promise<void> {
   const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+
+  // Use the File System Access API if available (Chrome, Edge, etc.)
+  if ('showSaveFilePicker' in window) {
+    try {
+      const handle = await (window as any).showSaveFilePicker({
+        suggestedName: fileName,
+        types: [
+          {
+            description: 'CSV File',
+            accept: { 'text/csv': ['.csv'] },
+          },
+        ],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return;
+    } catch (err: any) {
+      // If user aborts, don't fall back to standard download
+      if (err.name === 'AbortError') {
+        return;
+      }
+      console.error('showSaveFilePicker failed:', err);
+    }
+  }
+
+  // Fallback for browsers that don't support showSaveFilePicker (Safari, Firefox)
   const link = document.createElement('a');
   const url = URL.createObjectURL(blob);
   link.setAttribute('href', url);

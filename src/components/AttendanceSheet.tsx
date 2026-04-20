@@ -126,7 +126,7 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({ cls }) => {
 
     const csv = Papa.unparse(csvData);
     try {
-      await exportCsvFile(`attendance_${cls.name}_${exportStartDate}_to_${exportEndDate}.csv`, csv);
+      await exportCsvFile(`${cls.name}_${exportStartDate}_to_${exportEndDate}.csv`, csv);
       setIsExportModalOpen(false);
       toast.success('Attendance exported successfully');
     } catch (error) {
