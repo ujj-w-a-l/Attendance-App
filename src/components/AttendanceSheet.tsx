@@ -40,14 +40,17 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({ cls }) => {
   }, [cls.id, date, sessionName]);
 
   const loadData = async () => {
-    const [studentList, attendanceList, sessions] = await Promise.all([
+    const [studentList, attendanceList, dbSessions] = await Promise.all([
       api.getStudents(cls.id),
       api.getAttendance(cls.id, date, sessionName),
       api.getSessions(cls.id, date)
     ]);
 
     setStudents(studentList);
-    setAvailableSessions(sessions);
+    
+    // Ensure the currently selected session (which might be newly added and not in DB yet) is kept
+    const mergedSessions = Array.from(new Set([...dbSessions, sessionName])).sort();
+    setAvailableSessions(mergedSessions);
     
     const initialAttendance: Record<number, { status: 'present' | 'absent', notes: string }> = {};
     studentList.forEach(s => {
@@ -107,18 +110,23 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({ cls }) => {
   const handleExport = async () => {
     const data = await api.getExportData(cls.id, exportStartDate, exportEndDate);
     
-    // Pivot data: Rows are students, Columns are dates
-    const datesSet = new Set<string>();
-    data.attendance.forEach(a => datesSet.add(a.date));
-    const dates = Array.from(datesSet).sort();
+    // Pivot data: Rows are students, Columns are dates + sessions
+    const sessionsSet = new Set<string>();
+    data.attendance.forEach((a) => sessionsSet.add(`${a.date} (${a.session_name})`));
+    const sessionHeaders = Array.from(sessionsSet).sort();
     
     const csvData = data.students.map(student => {
       const row: any = { 'Student Name': student.name };
-      dates.forEach(d => {
-        const record = data.attendance.find(a => a.student_id === student.id && a.date === d);
-        row[d] = record ? record.status.toUpperCase() : 'ABSENT';
+      sessionHeaders.forEach((header) => {
+        const [date, sessionPart] = header.split(' (');
+        const sessionName = sessionPart.replace(')', '');
+        
+        const record = data.attendance.find(
+          (a) => a.student_id === student.id && a.date === date && a.session_name === sessionName
+        );
+        row[header] = record ? record.status.toUpperCase() : 'ABSENT';
         if (record?.notes) {
-          row[`${d} Notes`] = record.notes;
+          row[`${header} Notes`] = record.notes;
         }
       });
       return row;
