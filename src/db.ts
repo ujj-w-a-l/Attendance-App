@@ -4,6 +4,7 @@ import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
 // relying on a bare "/sql-wasm.wasm" path resolving correctly in the
 // Capacitor WebView.
 import sqlWasmUrl from 'sql.js/dist/sql-wasm.wasm?url';
+import { DatabaseError, ValidationError } from './errors';
 
 const DB_NAME = 'classtrack_attendance';
 const DB_STORE = 'database';
@@ -141,11 +142,44 @@ export async function initDatabase(): Promise<void> {
       student_id INTEGER NOT NULL,
       date TEXT NOT NULL,
       status TEXT NOT NULL,
+      session_name TEXT NOT NULL DEFAULT 'Session 1',
       notes TEXT,
       FOREIGN KEY (student_id) REFERENCES students (id) ON DELETE CASCADE,
-      UNIQUE(student_id, date)
+      UNIQUE(student_id, date, session_name)
     )
   `);
+
+  // Migration: Check if session_name column exists (for older versions)
+  try {
+    const tableInfo = db.exec("PRAGMA table_info(attendance)");
+    const hasSessionName = tableInfo[0].values.some(row => row[1] === 'session_name');
+    
+    if (!hasSessionName) {
+      console.log('Migrating attendance table to include session_name...');
+      // SQLite doesn't support DROP CONSTRAINT, so we recreate the table
+      db.run("ALTER TABLE attendance RENAME TO attendance_old");
+      db.run(`
+        CREATE TABLE attendance (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          student_id INTEGER NOT NULL,
+          date TEXT NOT NULL,
+          status TEXT NOT NULL,
+          session_name TEXT NOT NULL DEFAULT 'Session 1',
+          notes TEXT,
+          FOREIGN KEY (student_id) REFERENCES students (id) ON DELETE CASCADE,
+          UNIQUE(student_id, date, session_name)
+        )
+      `);
+      db.run(`
+        INSERT INTO attendance (student_id, date, status, notes)
+        SELECT student_id, date, status, notes FROM attendance_old
+      `);
+      db.run("DROP TABLE attendance_old");
+      console.log('Migration complete.');
+    }
+  } catch (err) {
+    console.error('Migration failed:', err);
+  }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS settings (
@@ -176,9 +210,14 @@ export async function persist(): Promise<void> {
   await saveToIndexedDB();
 }
 
+/** ONLY FOR TESTING: Reset the internal db reference */
+export function resetDbForTesting(): void {
+  db = null;
+}
+
 /** Get the raw database instance (for advanced queries) */
 export function getDb(): SqlJsDatabase {
-  if (!db) throw new Error('Database not initialized. Call initDatabase() first.');
+  if (!db) throw new DatabaseError('Database not initialized. Call initDatabase() first.');
   return db;
 }
 
@@ -197,7 +236,7 @@ function sqlStr(value: string | null | undefined): string {
 
 function sqlInt(value: number): string {
   const n = Number(value);
-  if (!Number.isFinite(n)) throw new Error(`sqlInt: not a finite number (${value})`);
+  if (!Number.isFinite(n)) throw new ValidationError(`sqlInt: not a finite number (${value})`);
   return String(Math.trunc(n));
 }
 
@@ -212,8 +251,7 @@ export function getAllClasses(): ClassRow[] {
   const stmt = getDb().prepare('SELECT * FROM classes');
   const results: ClassRow[] = [];
   while (stmt.step()) {
-    const row = stmt.getAsObject() as ClassRow;
-    results.push(row);
+    const row = stmt.getAsObject() as unknown as ClassRow;    results.push(row);
   }
   stmt.free();
   return results;
@@ -221,24 +259,32 @@ export function getAllClasses(): ClassRow[] {
 
 export function addClass(name: string): ClassRow {
   const trimmed = String(name ?? '').trim();
-  if (!trimmed) throw new Error('Class name cannot be empty');
+  if (!trimmed) throw new ValidationError('Class name cannot be empty');
   const database = getDb();
-  database.exec(`INSERT INTO classes (name) VALUES (${sqlStr(trimmed)})`);
-  const id = database.exec('SELECT last_insert_rowid() as id')[0].values[0][0] as number;
-  return { id, name: trimmed };
+  try {
+    database.exec(`INSERT INTO classes (name) VALUES (${sqlStr(trimmed)})`);
+    const id = database.exec('SELECT last_insert_rowid() as id')[0].values[0][0] as number;
+    return { id, name: trimmed };
+  } catch (err) {
+    throw new DatabaseError('Failed to add class', err);
+  }
 }
 
 export function deleteClass(id: number): void {
-  // Manual cascade since sql.js PRAGMA foreign_keys may not be reliable
-  const students = getDb().exec('SELECT id FROM students WHERE class_id = ?', [id]);
-  if (students.length > 0 && students[0].values.length > 0) {
-    const studentIds = students[0].values.map(row => row[0] as number);
-    for (const sid of studentIds) {
-      getDb().run('DELETE FROM attendance WHERE student_id = ?', [sid]);
+  try {
+    // Manual cascade since sql.js PRAGMA foreign_keys may not be reliable
+    const students = getDb().exec('SELECT id FROM students WHERE class_id = ?', [id]);
+    if (students.length > 0 && students[0].values.length > 0) {
+      const studentIds = students[0].values.map(row => row[0] as number);
+      for (const sid of studentIds) {
+        getDb().run('DELETE FROM attendance WHERE student_id = ?', [sid]);
+      }
     }
+    getDb().run('DELETE FROM students WHERE class_id = ?', [id]);
+    getDb().run('DELETE FROM classes WHERE id = ?', [id]);
+  } catch (err) {
+    throw new DatabaseError('Failed to delete class', err);
   }
-  getDb().run('DELETE FROM students WHERE class_id = ?', [id]);
-  getDb().run('DELETE FROM classes WHERE id = ?', [id]);
 }
 
 // ─── Students ───────────────────────────────────────────────────────────────
@@ -250,49 +296,76 @@ export interface StudentRow {
 }
 
 export function getStudentsByClass(classId: number): StudentRow[] {
-  const stmt = getDb().prepare('SELECT * FROM students WHERE class_id = ?');
-  stmt.bind([classId]);
-  const results: StudentRow[] = [];
-  while (stmt.step()) {
-    const row = stmt.getAsObject() as StudentRow;
-    results.push(row);
+  try {
+    const stmt = getDb().prepare('SELECT * FROM students WHERE class_id = ?');
+    stmt.bind([classId]);
+    const results: StudentRow[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject() as unknown as StudentRow;
+      results.push(row);
+    }
+    stmt.free();
+    return results;
+  } catch (err) {
+    throw new DatabaseError('Failed to get students', err);
   }
-  stmt.free();
-  return results;
 }
 
 export function addStudent(classId: number, name: string): StudentRow {
   const trimmed = String(name ?? '').trim();
-  if (!trimmed) throw new Error('Student name cannot be empty');
+  if (!trimmed) throw new ValidationError('Student name cannot be empty');
   const database = getDb();
-  database.exec(
-    `INSERT INTO students (class_id, name) VALUES (${sqlInt(classId)}, ${sqlStr(trimmed)})`
-  );
-  const id = database.exec('SELECT last_insert_rowid() as id')[0].values[0][0] as number;
-  return { id, class_id: classId, name: trimmed };
+  try {
+    database.exec(
+      `INSERT INTO students (class_id, name) VALUES (${sqlInt(classId)}, ${sqlStr(trimmed)})`
+    );
+    const id = database.exec('SELECT last_insert_rowid() as id')[0].values[0][0] as number;
+    return { id, class_id: classId, name: trimmed };
+  } catch (err) {
+    throw new DatabaseError('Failed to add student', err);
+  }
 }
 
 export function addStudentsBulk(classId: number, names: string[]): void {
   const cid = sqlInt(classId);
   const database = getDb();
-  for (const name of names) {
-    const trimmed = String(name ?? '').trim();
-    if (!trimmed) continue;
-    database.exec(
-      `INSERT INTO students (class_id, name) VALUES (${cid}, ${sqlStr(trimmed)})`
-    );
+  try {
+    database.exec('BEGIN TRANSACTION');
+    for (const name of names) {
+      const trimmed = String(name ?? '').trim();
+      if (!trimmed) continue;
+      database.exec(
+        `INSERT INTO students (class_id, name) VALUES (${cid}, ${sqlStr(trimmed)})`
+      );
+    }
+    database.exec('COMMIT');
+  } catch (err) {
+    database.exec('ROLLBACK');
+    throw new DatabaseError('Failed to add students in bulk', err);
   }
 }
 
 export function deleteStudent(id: number): void {
-  getDb().run('DELETE FROM attendance WHERE student_id = ?', [id]);
-  getDb().run('DELETE FROM students WHERE id = ?', [id]);
+  try {
+    getDb().run('DELETE FROM attendance WHERE student_id = ?', [id]);
+    getDb().run('DELETE FROM students WHERE id = ?', [id]);
+  } catch (err) {
+    throw new DatabaseError('Failed to delete student', err);
+  }
 }
 
 export function deleteStudentsBulk(ids: number[]): void {
-  for (const id of ids) {
-    getDb().run('DELETE FROM attendance WHERE student_id = ?', [id]);
-    getDb().run('DELETE FROM students WHERE id = ?', [id]);
+  const database = getDb();
+  try {
+    database.exec('BEGIN TRANSACTION');
+    for (const id of ids) {
+      database.run('DELETE FROM attendance WHERE student_id = ?', [id]);
+      database.run('DELETE FROM students WHERE id = ?', [id]);
+    }
+    database.exec('COMMIT');
+  } catch (err) {
+    database.exec('ROLLBACK');
+    throw new DatabaseError('Failed to delete students in bulk', err);
   }
 }
 
@@ -303,62 +376,103 @@ export interface AttendanceRow {
   student_id: number;
   date: string;
   status: string;
+  session_name: string;
   notes: string | null;
 }
 
 export function getStudentHistory(studentId: number): AttendanceRow[] {
-  const stmt = getDb().prepare(
-    'SELECT date, status, notes FROM attendance WHERE student_id = ? ORDER BY date DESC'
-  );
-  stmt.bind([studentId]);
-  const results: AttendanceRow[] = [];
-  while (stmt.step()) {
-    const row = stmt.getAsObject() as AttendanceRow;
-    results.push(row);
+  try {
+    const stmt = getDb().prepare(
+      'SELECT date, status, session_name, notes FROM attendance WHERE student_id = ? ORDER BY date DESC, session_name ASC'
+    );
+    stmt.bind([studentId]);
+    const results: AttendanceRow[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject() as unknown as AttendanceRow;
+      results.push(row);
+    }
+    stmt.free();
+    return results;
+  } catch (err) {
+    throw new DatabaseError('Failed to get student history', err);
   }
-  stmt.free();
-  return results;
 }
 
-export function getAttendanceByClassAndDate(classId: number, date: string): AttendanceRow[] {
-  const stmt = getDb().prepare(`
-    SELECT a.* FROM attendance a
-    JOIN students s ON a.student_id = s.id
-    WHERE s.class_id = ? AND a.date = ?
-  `);
-  stmt.bind([classId, date]);
-  const results: AttendanceRow[] = [];
-  while (stmt.step()) {
-    const row = stmt.getAsObject() as AttendanceRow;
-    results.push(row);
+export function getAttendanceByClassAndDate(classId: number, date: string, sessionName: string): AttendanceRow[] {
+  try {
+    const stmt = getDb().prepare(`
+      SELECT a.* FROM attendance a
+      JOIN students s ON a.student_id = s.id
+      WHERE s.class_id = ? AND a.date = ? AND a.session_name = ?
+    `);
+    stmt.bind([classId, date, sessionName]);
+    const results: AttendanceRow[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject() as unknown as AttendanceRow;
+      results.push(row);
+    }
+    stmt.free();
+    return results;
+  } catch (err) {
+    throw new DatabaseError('Failed to get attendance', err);
   }
-  stmt.free();
-  return results;
+}
+
+export function getSessionsForDate(classId: number, date: string): string[] {
+  try {
+    const stmt = getDb().prepare(`
+      SELECT DISTINCT session_name FROM attendance a
+      JOIN students s ON a.student_id = s.id
+      WHERE s.class_id = ? AND a.date = ?
+    `);
+    stmt.bind([classId, date]);
+    const results: string[] = [];
+    while (stmt.step()) {
+      results.push(stmt.getAsObject().session_name as string);
+    }
+    stmt.free();
+    // Always include at least "Session 1" if empty
+    return results.length > 0 ? results : ['Session 1'];
+  } catch (err) {
+    return ['Session 1'];
+  }
 }
 
 export function saveAttendance(
   studentId: number,
   date: string,
   status: string,
+  sessionName: string,
   notes?: string
 ): void {
-  getDb().exec(
-    `INSERT INTO attendance (student_id, date, status, notes)
-     VALUES (${sqlInt(studentId)}, ${sqlStr(date)}, ${sqlStr(status)}, ${sqlStr(notes ?? null)})
-     ON CONFLICT(student_id, date) DO UPDATE SET status = excluded.status, notes = excluded.notes`
-  );
+  try {
+    getDb().exec(
+      `INSERT INTO attendance (student_id, date, status, session_name, notes)
+       VALUES (${sqlInt(studentId)}, ${sqlStr(date)}, ${sqlStr(status)}, ${sqlStr(sessionName)}, ${sqlStr(notes ?? null)})
+       ON CONFLICT(student_id, date, session_name) DO UPDATE SET status = excluded.status, notes = excluded.notes`
+    );
+  } catch (err) {
+    throw new DatabaseError('Failed to save attendance', err);
+  }
 }
 
 export function saveAttendanceBulk(
-  records: { student_id: number; date: string; status: string; notes?: string }[]
+  records: { student_id: number; date: string; status: string; session_name: string; notes?: string }[]
 ): void {
   const database = getDb();
-  for (const record of records) {
-    database.exec(
-      `INSERT INTO attendance (student_id, date, status, notes)
-       VALUES (${sqlInt(record.student_id)}, ${sqlStr(record.date)}, ${sqlStr(record.status)}, ${sqlStr(record.notes ?? null)})
-       ON CONFLICT(student_id, date) DO UPDATE SET status = excluded.status, notes = excluded.notes`
-    );
+  try {
+    database.exec('BEGIN TRANSACTION');
+    for (const record of records) {
+      database.exec(
+        `INSERT INTO attendance (student_id, date, status, session_name, notes)
+         VALUES (${sqlInt(record.student_id)}, ${sqlStr(record.date)}, ${sqlStr(record.status)}, ${sqlStr(record.session_name)}, ${sqlStr(record.notes ?? null)})
+         ON CONFLICT(student_id, date, session_name) DO UPDATE SET status = excluded.status, notes = excluded.notes`
+      );
+    }
+    database.exec('COMMIT');
+  } catch (err) {
+    database.exec('ROLLBACK');
+    throw new DatabaseError('Failed to save attendance in bulk', err);
   }
 }
 
@@ -366,7 +480,7 @@ export function saveAttendanceBulk(
 
 export interface ExportDataResult {
   students: { id: number; name: string }[];
-  attendance: { student_id: number; date: string; status: string; notes: string | null }[];
+  attendance: { student_id: number; date: string; status: string; session_name: string; notes: string | null }[];
 }
 
 export function getExportData(
@@ -374,63 +488,80 @@ export function getExportData(
   startDate?: string,
   endDate?: string
 ): ExportDataResult {
-  // Get students
-  const studentsStmt = getDb().prepare(
-    'SELECT id, name FROM students WHERE class_id = ? ORDER BY name ASC'
-  );
-  studentsStmt.bind([classId]);
-  const students: { id: number; name: string }[] = [];
-  while (studentsStmt.step()) {
-    students.push(studentsStmt.getAsObject() as { id: number; name: string });
-  }
-  studentsStmt.free();
-
-  // Get attendance
-  let query = `SELECT student_id, date, status, notes FROM attendance
-    WHERE student_id IN (SELECT id FROM students WHERE class_id = ?)`;
-  const params: any[] = [classId];
-
-  if (startDate && endDate) {
-    query += ' AND date >= ? AND date <= ?';
-    params.push(startDate, endDate);
-  }
-  query += ' ORDER BY date ASC';
-
-  const attendanceStmt = getDb().prepare(query);
-  attendanceStmt.bind(params);
-  const attendance: { student_id: number; date: string; status: string; notes: string | null }[] = [];
-  while (attendanceStmt.step()) {
-    attendance.push(
-      attendanceStmt.getAsObject() as {
-        student_id: number;
-        date: string;
-        status: string;
-        notes: string | null;
-      }
+  try {
+    // Get students
+    const studentsStmt = getDb().prepare(
+      'SELECT id, name FROM students WHERE class_id = ? ORDER BY name ASC'
     );
-  }
-  attendanceStmt.free();
+    studentsStmt.bind([classId]);
+    const students: { id: number; name: string }[] = [];
+    while (studentsStmt.step()) {
+      students.push(studentsStmt.getAsObject() as { id: number; name: string });
+    }
+    studentsStmt.free();
 
-  return { students, attendance };
+    // Get attendance
+    let query = `SELECT student_id, date, status, session_name, notes FROM attendance
+      WHERE student_id IN (SELECT id FROM students WHERE class_id = ?)`;
+    const params: any[] = [classId];
+
+    if (startDate && endDate) {
+      query += ' AND date >= ? AND date <= ?';
+      params.push(startDate, endDate);
+    }
+    query += ' ORDER BY date ASC, session_name ASC';
+
+    const attendanceStmt = getDb().prepare(query);
+    attendanceStmt.bind(params);
+    const attendance: { student_id: number; date: string; status: string; session_name: string; notes: string | null }[] = [];
+    while (attendanceStmt.step()) {
+      attendance.push(
+        attendanceStmt.getAsObject() as {
+          student_id: number;
+          date: string;
+          status: string;
+          session_name: string;
+          notes: string | null;
+        }
+      );
+    }
+    attendanceStmt.free();
+
+    return { students, attendance };
+  } catch (err) {
+    throw new DatabaseError('Failed to get export data', err);
+  }
 }
 
 // ─── Settings ───────────────────────────────────────────────────────────────
 
 export function getSetting(key: string): string | null {
-  const result = getDb().exec(`SELECT value FROM settings WHERE key = ${sqlStr(key)}`);
-  if (result.length > 0 && result[0].values.length > 0) {
-    return result[0].values[0][0] as string;
+  try {
+    const result = getDb().exec(`SELECT value FROM settings WHERE key = ${sqlStr(key)}`);
+    if (result.length > 0 && result[0].values.length > 0) {
+      return result[0].values[0][0] as string;
+    }
+    return null;
+  } catch (err) {
+    throw new DatabaseError(`Failed to get setting: ${key}`, err);
   }
-  return null;
 }
 
 export function setSetting(key: string, value: string): void {
-  getDb().exec(
-    `INSERT INTO settings (key, value) VALUES (${sqlStr(key)}, ${sqlStr(value)})
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-  );
+  try {
+    getDb().exec(
+      `INSERT INTO settings (key, value) VALUES (${sqlStr(key)}, ${sqlStr(value)})
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+    );
+  } catch (err) {
+    throw new DatabaseError(`Failed to set setting: ${key}`, err);
+  }
 }
 
 export function deleteSetting(key: string): void {
-  getDb().exec(`DELETE FROM settings WHERE key = ${sqlStr(key)}`);
+  try {
+    getDb().exec(`DELETE FROM settings WHERE key = ${sqlStr(key)}`);
+  } catch (err) {
+    throw new DatabaseError(`Failed to delete setting: ${key}`, err);
+  }
 }

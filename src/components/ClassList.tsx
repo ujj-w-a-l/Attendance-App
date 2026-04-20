@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Class } from '../types';
-import { Plus, Users, Trash2, Cloud, CloudOff, RefreshCw } from 'lucide-react';
+import { Plus, Users, Trash2, Cloud, CloudOff, RefreshCw, Search, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { ConfirmDialog } from './ConfirmDialog';
 import { api } from '../api';
@@ -19,6 +19,13 @@ export const ClassList: React.FC<ClassListProps> = ({ classes, onSelectClass, on
   const [isAdding, setIsAdding] = useState(false);
   const [newClassName, setNewClassName] = useState('');
   const [classToDelete, setClassToDelete] = useState<Class | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const filteredClasses = useMemo(() => {
+    return classes.filter(cls => 
+      cls.name.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+  }, [classes, searchQuery]);
 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -155,8 +162,29 @@ export const ClassList: React.FC<ClassListProps> = ({ classes, onSelectClass, on
 
   return (
     <>
+      <div className="mb-6 relative group">
+        <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-black/30 group-focus-within:text-indigo-500 transition-colors">
+          <Search size={20} />
+        </div>
+        <input
+          type="text"
+          placeholder="Search classes..."
+          className="w-full bg-white border border-black/5 rounded-2xl py-4 pl-12 pr-12 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm transition-all"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery('')}
+            className="absolute inset-y-0 right-0 pr-4 flex items-center text-black/20 hover:text-black/40 transition-colors"
+          >
+            <X size={20} />
+          </button>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {classes.map((cls) => (
+        {filteredClasses.map((cls) => (
           <motion.div
             key={cls.id}
             whileHover={{ scale: 1.02 }}

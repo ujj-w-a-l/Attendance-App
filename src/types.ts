@@ -14,10 +14,17 @@ export interface AttendanceRecord {
   student_id: number;
   date: string;
   status: 'present' | 'absent';
+  session_name: string;
   notes?: string;
 }
 
 export interface ExportData {
   students: { id: number; name: string }[];
-  attendance: { student_id: number; date: string; status: string; notes: string | null }[];
+  attendance: { 
+    student_id: number; 
+    date: string; 
+    status: string; 
+    session_name: string;
+    notes: string | null 
+  }[];
 }

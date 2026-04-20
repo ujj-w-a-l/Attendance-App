@@ -65,8 +65,8 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
                     onCancel();
                   }}
                   className={`px-4 py-2 rounded-xl text-sm font-bold text-white transition-colors ${
-                    isDestructive ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'
-                  }`}
+ isDestructive ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'
+ }`}
                 >
                   {confirmText}
                 </button>

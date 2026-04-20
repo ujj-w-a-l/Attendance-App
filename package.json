@@ -11,15 +11,16 @@
     "lint": "tsc --noEmit",
     "cap:sync": "npx cap sync",
     "cap:open": "npx cap open android",
-    "android": "npm run build && npx cap sync && npx cap open android"
+    "android": "npm run build && npx cap sync && npx cap open android",
+    "test": "vitest"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.0",
     "@capacitor/core": "^6.2.0",
     "@capacitor/filesystem": "^6.0.0",
     "@capacitor/share": "^6.0.0",
-    "@capacitor/toast": "^6.0.0",
     "@capacitor/status-bar": "^6.0.0",
+    "@capacitor/toast": "^6.0.0",
     "@codetrix-studio/capacitor-google-auth": "3.4.0-rc.4",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
@@ -30,6 +31,7 @@
     "papaparse": "^5.5.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "sonner": "^2.0.7",
     "sql.js": "^1.11.0",
     "tailwind-merge": "^3.5.0",
     "vite": "^6.2.0",
@@ -39,9 +41,13 @@
     "@capacitor/cli": "^6.2.0",
     "@types/node": "^22.14.0",
     "@types/papaparse": "^5.5.2",
+    "@types/sql.js": "^1.4.11",
+    "@vitest/ui": "^4.1.4",
     "autoprefixer": "^10.4.21",
+    "fake-indexeddb": "^6.2.5",
     "tailwindcss": "^4.1.14",
     "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "vitest": "^4.1.4"
   }
 }

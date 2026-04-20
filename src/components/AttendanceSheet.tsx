@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { Class, Student, AttendanceRecord } from '../types';
 import { api } from '../api';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
-import { CheckCircle2, XCircle, Download, Calendar as CalendarIcon, MessageSquare, CheckSquare, Square, ArrowUpDown, X, ListChecks } from 'lucide-react';
+import { CheckCircle2, XCircle, Download, Calendar as CalendarIcon, MessageSquare, CheckSquare, Square, ArrowUpDown, X, ListChecks, Plus } from 'lucide-react';
 import Papa from 'papaparse';
 import { motion, AnimatePresence } from 'motion/react';
 import { exportCsvFile } from '../native-utils';
+import { toast } from 'sonner';
 
 interface AttendanceSheetProps {
   cls: Class;
@@ -14,6 +15,11 @@ interface AttendanceSheetProps {
 export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({ cls }) => {
   const [students, setStudents] = useState<Student[]>([]);
   const [date, setDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [sessionName, setSessionName] = useState('Session 1');
+  const [availableSessions, setAvailableSessions] = useState<string[]>(['Session 1']);
+  const [isAddingSession, setIsAddingSession] = useState(false);
+  const [newSessionName, setNewSessionName] = useState('');
+  
   const [attendance, setAttendance] = useState<Record<number, { status: 'present' | 'absent', notes: string }>>({});
   
   const [isSelectMultiple, setIsSelectMultiple] = useState(false);
@@ -31,21 +37,23 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({ cls }) => {
 
   useEffect(() => {
     loadData();
-  }, [cls.id, date]);
+  }, [cls.id, date, sessionName]);
 
   const loadData = async () => {
-    const [studentList, attendanceList] = await Promise.all([
+    const [studentList, attendanceList, sessions] = await Promise.all([
       api.getStudents(cls.id),
-      api.getAttendance(cls.id, date)
+      api.getAttendance(cls.id, date, sessionName),
+      api.getSessions(cls.id, date)
     ]);
 
     setStudents(studentList);
+    setAvailableSessions(sessions);
     
     const initialAttendance: Record<number, { status: 'present' | 'absent', notes: string }> = {};
     studentList.forEach(s => {
       const record = attendanceList.find(a => a.student_id === s.id);
       initialAttendance[s.id] = {
-        status: record ? record.status : 'present',
+        status: record ? record.status : 'absent',
         notes: record?.notes || ''
       };
     });
@@ -53,8 +61,22 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({ cls }) => {
     setSelectedStudents(new Set());
   };
 
+  const handleAddSession = () => {
+    const name = newSessionName.trim();
+    if (!name) return;
+    if (availableSessions.includes(name)) {
+      toast.error('Session name already exists');
+      return;
+    }
+    setAvailableSessions(prev => [...prev, name]);
+    setSessionName(name);
+    setNewSessionName('');
+    setIsAddingSession(false);
+    toast.success(`Session "${name}" created`);
+  };
+
   const toggleStatus = async (studentId: number) => {
-    const currentStatus = attendance[studentId]?.status || 'present';
+    const currentStatus = attendance[studentId]?.status || 'absent';
     const newStatus = currentStatus === 'present' ? 'absent' : 'present';
     const currentNotes = attendance[studentId]?.notes || '';
     
@@ -67,9 +89,10 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({ cls }) => {
     }));
     
     try {
-      await api.saveAttendance(studentId, date, newStatus, currentNotes);
+      await api.saveAttendance(studentId, date, newStatus, sessionName, currentNotes);
     } catch (error) {
       console.error('Failed to save attendance', error);
+      toast.error('Failed to save attendance');
       // Revert on failure
       setAttendance(prev => ({
         ...prev,
@@ -93,7 +116,7 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({ cls }) => {
       const row: any = { 'Student Name': student.name };
       dates.forEach(d => {
         const record = data.attendance.find(a => a.student_id === student.id && a.date === d);
-        row[d] = record ? record.status.toUpperCase() : 'N/A';
+        row[d] = record ? record.status.toUpperCase() : 'ABSENT';
         if (record?.notes) {
           row[`${d} Notes`] = record.notes;
         }
@@ -102,8 +125,14 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({ cls }) => {
     });
 
     const csv = Papa.unparse(csvData);
-    await exportCsvFile(`attendance_${cls.name}_${exportStartDate}_to_${exportEndDate}.csv`, csv);
-    setIsExportModalOpen(false);
+    try {
+      await exportCsvFile(`attendance_${cls.name}_${exportStartDate}_to_${exportEndDate}.csv`, csv);
+      setIsExportModalOpen(false);
+      toast.success('Attendance exported successfully');
+    } catch (error) {
+      console.error('Export failed', error);
+      toast.error('Failed to export attendance');
+    }
   };
 
   const toggleSelectAll = () => {
@@ -123,18 +152,26 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({ cls }) => {
     });
   };
 
-  const bulkMark = async (status: 'present' | 'absent') => {
+  const bulkMark = async (status: 'present' | 'absent', target: 'selected' | 'all' = 'selected') => {
+    const studentIds = target === 'all' 
+      ? students.map(s => s.id)
+      : Array.from(selectedStudents);
+    
+    if (studentIds.length === 0) return;
+
+    const count = studentIds.length;
     const recordsToSave: AttendanceRecord[] = [];
     
     setAttendance(prev => {
       const next = { ...prev };
-      selectedStudents.forEach(id => {
+      studentIds.forEach(id => {
         if (next[id]) {
           next[id] = { ...next[id], status };
           recordsToSave.push({
             student_id: id,
             date,
             status,
+            session_name: sessionName,
             notes: next[id].notes
           });
         }
@@ -142,13 +179,15 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({ cls }) => {
       return next;
     });
     
-    setSelectedStudents(new Set());
+    if (target === 'selected') setSelectedStudents(new Set());
     
     if (recordsToSave.length > 0) {
       try {
         await api.saveAttendanceBulk(recordsToSave);
+        toast.success(`Marked ${count} students as ${status}`);
       } catch (error) {
         console.error('Failed to save bulk attendance', error);
+        toast.error('Failed to save bulk attendance');
       }
     }
   };
@@ -169,9 +208,11 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({ cls }) => {
       setActiveNoteStudent(null);
       
       try {
-        await api.saveAttendance(studentId, date, currentStatus, noteText);
+        await api.saveAttendance(studentId, date, currentStatus, sessionName, noteText);
+        toast.success('Note saved');
       } catch (error) {
         console.error('Failed to save note', error);
+        toast.error('Failed to save note');
       }
     }
   };
@@ -191,30 +232,84 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({ cls }) => {
   return (
     <div className="space-y-6 relative">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 rounded-2xl shadow-sm border border-black/5">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
-            <CalendarIcon size={20} />
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4 w-full">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
+              <CalendarIcon size={20} />
+            </div>
+            <input
+              type="date"
+              className="font-semibold text-lg focus:outline-none bg-transparent"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+            />
           </div>
-          <input
-            type="date"
-            className="font-semibold text-lg focus:outline-none bg-transparent w-full sm:w-auto"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-          />
+
+          <div className="flex items-center gap-2 overflow-x-auto pb-2 sm:pb-0 scrollbar-hide">
+            {availableSessions.map((s) => (
+              <button
+                key={s}
+                onClick={() => setSessionName(s)}
+                className={`px-4 py-2 rounded-xl text-sm font-bold transition-all whitespace-nowrap ${
+ sessionName === s
+ ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200 '
+ : 'bg-black/5 text-black/40 hover:bg-black/10'
+ }`}
+              >
+                {s}
+              </button>
+            ))}
+            {isAddingSession ? (
+              <div className="flex items-center gap-2 bg-indigo-50 p-1 rounded-xl border border-indigo-200">
+                <input
+                  autoFocus
+                  type="text"
+                  placeholder="Session Name"
+                  className="bg-transparent border-none focus:outline-none px-2 py-1 text-sm font-medium w-32"
+                  value={newSessionName}
+                  onChange={(e) => setNewSessionName(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAddSession()}
+                />
+                <button
+                  onClick={handleAddSession}
+                  className="p-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+                >
+                  <CheckCircle2 size={16} />
+                </button>
+                <button
+                  onClick={() => {
+                    setIsAddingSession(false);
+                    setNewSessionName('');
+                  }}
+                  className="p-1.5 text-black/40 hover:text-red-500"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setIsAddingSession(true)}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-all border border-dashed border-indigo-200"
+              >
+                <Plus size={18} />
+                <span>New Session</span>
+              </button>
+            )}
+          </div>
         </div>
-        <div className="flex gap-2 w-full sm:w-auto">
+        <div className="flex gap-2 shrink-0">
           <button
             onClick={() => setIsExportModalOpen(true)}
             className="w-full sm:w-auto flex items-center justify-center gap-2 bg-white border border-black/10 px-4 py-2.5 rounded-xl font-medium hover:bg-black/5 transition-colors"
           >
             <Download size={18} />
-            Export attendance
+            Export
           </button>
         </div>
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border border-black/5 overflow-hidden">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 border-b border-black/5 bg-black/[0.02] gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 border-b border-black/5 bg-black/[0.02] [0.02] gap-4">
           <div className="flex items-center gap-4 flex-wrap">
             {isSelectMultiple && (
               <button
@@ -225,25 +320,42 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({ cls }) => {
                 Select All
               </button>
             )}
-            {isSelectMultiple && selectedStudents.size > 0 && (
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-sm font-bold text-indigo-600 bg-indigo-50 px-2 py-1.5 rounded-md">
-                  {selectedStudents.size} selected
-                </span>
-                <button
-                  onClick={() => bulkMark('present')}
-                  className="text-sm font-medium text-emerald-600 bg-emerald-50 px-4 py-2 rounded-lg hover:bg-emerald-100 transition-colors"
-                >
-                  Mark Present
-                </button>
-                <button
-                  onClick={() => bulkMark('absent')}
-                  className="text-sm font-medium text-red-600 bg-red-50 px-4 py-2 rounded-lg hover:bg-red-100 transition-colors"
-                >
-                  Mark Absent
-                </button>
-              </div>
-            )}
+            <div className="flex items-center gap-2 flex-wrap">
+              {isSelectMultiple && selectedStudents.size > 0 ? (
+                <>
+                  <span className="text-sm font-bold text-indigo-600 bg-indigo-50 px-2 py-1.5 rounded-md">
+                    {selectedStudents.size} selected
+                  </span>
+                  <button
+                    onClick={() => bulkMark('present', 'selected')}
+                    className="text-sm font-medium text-emerald-600 bg-emerald-50 px-4 py-2 rounded-lg hover:bg-emerald-100 transition-colors"
+                  >
+                    Mark Present
+                  </button>
+                  <button
+                    onClick={() => bulkMark('absent', 'selected')}
+                    className="text-sm font-medium text-red-600 bg-red-50 px-4 py-2 rounded-lg hover:bg-red-100 transition-colors"
+                  >
+                    Mark Absent
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={() => bulkMark('present', 'all')}
+                    className="text-xs font-bold uppercase tracking-wider text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-lg hover:bg-emerald-100 transition-colors border border-emerald-100"
+                  >
+                    Mark All Present
+                  </button>
+                  <button
+                    onClick={() => bulkMark('absent', 'all')}
+                    className="text-xs font-bold uppercase tracking-wider text-red-600 bg-red-50 px-3 py-1.5 rounded-lg hover:bg-red-100 transition-colors border border-red-100"
+                  >
+                    Mark All Absent
+                  </button>
+                </>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap w-full sm:w-auto">
             <div className="flex items-center gap-2 w-full sm:w-auto mb-2 sm:mb-0">
@@ -265,8 +377,8 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({ cls }) => {
                   if (isSelectMultiple) setSelectedStudents(new Set());
                 }}
                 className={`flex-1 sm:flex-none justify-center border px-4 py-2.5 rounded-xl text-sm font-medium transition-colors flex items-center gap-2 ${
-                  isSelectMultiple ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-white border-black/10 hover:bg-black/5'
-                }`}
+ isSelectMultiple ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-white border-black/10 hover:bg-black/5'
+ }`}
               >
                 <ListChecks size={18} />
                 Select Multiple
@@ -274,8 +386,8 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({ cls }) => {
               <button
                 onClick={() => setShowNotes(!showNotes)}
                 className={`flex-1 sm:flex-none justify-center border px-4 py-2.5 rounded-xl text-sm font-medium transition-colors flex items-center gap-2 ${
-                  showNotes ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-white border-black/10 hover:bg-black/5'
-                }`}
+ showNotes ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-white border-black/10 hover:bg-black/5'
+ }`}
               >
                 <MessageSquare size={18} />
                 Notes
@@ -302,7 +414,7 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({ cls }) => {
 
         <div className="divide-y divide-black/5">
           {sortedStudents.map((student) => {
-            const data = attendance[student.id] || { status: 'present', notes: '' };
+            const data = attendance[student.id] || { status: 'absent', notes: '' };
             const status = data.status;
             const hasNote = data.notes.trim().length > 0;
 
@@ -333,12 +445,10 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({ cls }) => {
                   )}
                 </div>
                 <div className="flex justify-center cursor-pointer shrink-0 w-[100px]" onClick={() => toggleStatus(student.id)}>
-                  <div className={`
-                    flex items-center justify-center gap-1.5 w-full py-1.5 rounded-full text-sm font-bold transition-all
-                    ${status === 'present' 
-                      ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' 
-                      : 'bg-red-50 text-red-600 border border-red-100'}
-                  `}>
+                  <div className={`flex items-center justify-center gap-1.5 w-full py-1.5 rounded-full text-sm font-bold transition-all
+ ${status === 'present' 
+ ? 'bg-emerald-500 text-white shadow-sm shadow-emerald-200 ' 
+ : 'bg-zinc-100 text-zinc-500 border border-zinc-200 '}`}>
                     {status === 'present' ? (
                       <>
                         <CheckCircle2 size={16} />
@@ -382,7 +492,7 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({ cls }) => {
           Present: {Object.values(attendance).filter(s => (s as {status: string}).status === 'present').length}
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-3 h-3 rounded-full bg-red-500" />
+          <div className="w-3 h-3 rounded-full bg-zinc-300" />
           Absent: {Object.values(attendance).filter(s => (s as {status: string}).status === 'absent').length}
         </div>
       </div>

@@ -212,19 +212,22 @@ export async function performDriveSync(): Promise<void> {
       const exportData = db.getExportData(cls.id, startOfMonth, endOfMonth);
 
       // Build CSV data
-      const datesSet = new Set<string>();
-      exportData.attendance.forEach((a) => datesSet.add(a.date));
-      const dates = Array.from(datesSet).sort();
+      const sessionsSet = new Set<string>();
+      exportData.attendance.forEach((a) => sessionsSet.add(`${a.date} (${a.session_name})`));
+      const sessionHeaders = Array.from(sessionsSet).sort();
 
       const csvData = exportData.students.map((student) => {
         const row: any = { 'Student Name': student.name };
-        dates.forEach((d) => {
+        sessionHeaders.forEach((header) => {
+          const [date, sessionPart] = header.split(' (');
+          const sessionName = sessionPart.replace(')', '');
+          
           const record = exportData.attendance.find(
-            (a) => a.student_id === student.id && a.date === d
+            (a) => a.student_id === student.id && a.date === date && a.session_name === sessionName
           );
-          row[d] = record ? record.status.toUpperCase() : 'N/A';
+          row[header] = record ? record.status.toUpperCase() : 'ABSENT';
           if (record?.notes) {
-            row[`${d} Notes`] = record.notes;
+            row[`${header} Notes`] = record.notes;
           }
         });
         return row;

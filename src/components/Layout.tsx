@@ -11,7 +11,7 @@ interface LayoutProps {
 
 export const Layout: React.FC<LayoutProps> = ({ children, title, onBack, actions }) => {
   return (
-    <div className="min-h-screen bg-[#F5F5F5] text-[#1A1A1A] font-sans">
+    <div className="min-h-screen bg-[#F5F5F5] text-[#1A1A1A] font-sans transition-colors duration-300">
       <header className="sticky top-0 z-10 bg-white/80 backdrop-blur-md border-b border-black/5 px-4 py-4 sm:px-6">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">

@@ -49,20 +49,25 @@ export const api = {
   },
 
   getStudentHistory: async (studentId: number): Promise<AttendanceRecord[]> => {
-    return db.getStudentHistory(studentId) as AttendanceRecord[];
+    return db.getStudentHistory(studentId) as unknown as AttendanceRecord[];
   },
 
-  getAttendance: async (classId: number, date: string): Promise<AttendanceRecord[]> => {
-    return db.getAttendanceByClassAndDate(classId, date) as AttendanceRecord[];
+  getAttendance: async (classId: number, date: string, sessionName: string): Promise<AttendanceRecord[]> => {
+    return db.getAttendanceByClassAndDate(classId, date, sessionName) as unknown as AttendanceRecord[];
+  },
+
+  getSessions: async (classId: number, date: string): Promise<string[]> => {
+    return db.getSessionsForDate(classId, date);
   },
 
   saveAttendance: async (
     student_id: number,
     date: string,
     status: 'present' | 'absent',
+    sessionName: string,
     notes?: string
   ): Promise<void> => {
-    db.saveAttendance(student_id, date, status, notes);
+    db.saveAttendance(student_id, date, status, sessionName, notes);
     await db.persist();
     // Trigger background sync (non-blocking)
     performDriveSync().catch(() => {});

@@ -4,9 +4,11 @@ import { ClassList } from './components/ClassList';
 import { ClassDetail } from './components/ClassDetail';
 import { AttendanceSheet } from './components/AttendanceSheet';
 import { TutorialModal } from './components/TutorialModal';
+import { ClassCardSkeleton } from './components/Skeleton';
 import { Class } from './types';
 import { api } from './api';
 import { LogOut, HelpCircle } from 'lucide-react';
+import { Toaster, toast } from 'sonner';
 
 type View = 'dashboard' | 'classDetail' | 'attendance';
 
@@ -28,19 +30,30 @@ export default function App() {
       setClasses(data);
     } catch (error) {
       console.error('Failed to load classes', error);
+      toast.error('Failed to load classes');
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleAddClass = async (name: string) => {
-    await api.addClass(name);
-    loadClasses();
+    try {
+      await api.addClass(name);
+      loadClasses();
+      toast.success('Class added successfully');
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to add class');
+    }
   };
 
   const handleDeleteClass = async (id: number) => {
-    await api.deleteClass(id);
-    loadClasses();
+    try {
+      await api.deleteClass(id);
+      loadClasses();
+      toast.success('Class deleted successfully');
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to delete class');
+    }
   };
 
   const handleSelectClass = (cls: Class) => {
@@ -60,8 +73,10 @@ export default function App() {
   const renderContent = () => {
     if (isLoading) {
       return (
-        <div className="flex items-center justify-center py-20">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[...Array(6)].map((_, i) => (
+            <ClassCardSkeleton key={i} />
+          ))}
         </div>
       );
     }
@@ -101,6 +116,7 @@ export default function App() {
 
   return (
     <>
+      <Toaster position="top-center" richColors />
       <Layout
         title={getTitle()}
         onBack={view !== 'dashboard' ? handleBack : undefined}

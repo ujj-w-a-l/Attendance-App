@@ -1,13 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Class, Student, AttendanceRecord } from '../types';
 import { api } from '../api';
-import { UserPlus, Upload, Trash2, Check, X, History, ArrowUpDown, FileSpreadsheet, Download } from 'lucide-react';
+import { UserPlus, Upload, Trash2, Check, X, History, ArrowUpDown, FileSpreadsheet, Download, Search } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
 import { ConfirmDialog } from './ConfirmDialog';
 import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
 import { exportCsvFile } from '../native-utils';
+import { toast } from 'sonner';
 
 interface ClassDetailProps {
   cls: Class;
@@ -35,6 +36,22 @@ export const ClassDetail: React.FC<ClassDetailProps> = ({ cls, onTakeAttendance 
   const [exportStartDate, setExportStartDate] = useState(format(new Date(new Date().getFullYear(), new Date().getMonth(), 1), 'yyyy-MM-dd'));
   const [exportEndDate, setExportEndDate] = useState(format(new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0), 'yyyy-MM-dd'));
 
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const filteredStudents = useMemo(() => {
+    const sorted = [...students].sort((a, b) => {
+      return sortOrder === 'asc' 
+        ? a.name.localeCompare(b.name)
+        : b.name.localeCompare(a.name);
+    });
+
+    if (!searchQuery.trim()) return sorted;
+    
+    return sorted.filter(s => 
+      s.name.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+  }, [students, searchQuery, sortOrder]);
+
   useEffect(() => {
     loadStudents();
   }, [cls.id]);
@@ -45,60 +62,80 @@ export const ClassDetail: React.FC<ClassDetailProps> = ({ cls, onTakeAttendance 
   };
 
   const handleExport = async () => {
-    const data = await api.getExportData(cls.id, exportStartDate, exportEndDate);
-    
-    // Pivot data: Rows are students, Columns are dates
-    const datesSet = new Set<string>();
-    data.attendance.forEach(a => datesSet.add(a.date));
-    const dates = Array.from(datesSet).sort();
-    
-    const csvData = data.students.map(student => {
-      const row: any = { 'Student Name': student.name };
-      dates.forEach(d => {
-        const record = data.attendance.find(a => a.student_id === student.id && a.date === d);
-        row[d] = record ? record.status.toUpperCase() : 'N/A';
-        if (record?.notes) {
-          row[`${d} Notes`] = record.notes;
-        }
+    try {
+      const data = await api.getExportData(cls.id, exportStartDate, exportEndDate);
+      
+      // Pivot data: Rows are students, Columns are dates
+      const datesSet = new Set<string>();
+      data.attendance.forEach(a => datesSet.add(a.date));
+      const dates = Array.from(datesSet).sort();
+      
+      const csvData = data.students.map(student => {
+        const row: any = { 'Student Name': student.name };
+        dates.forEach(d => {
+          const record = data.attendance.find(a => a.student_id === student.id && a.date === d);
+          row[d] = record ? record.status.toUpperCase() : 'ABSENT';
+          if (record?.notes) {
+            row[`${d} Notes`] = record.notes;
+          }
+        });
+        return row;
       });
-      return row;
-    });
-
-    const csv = Papa.unparse(csvData);
-    await exportCsvFile(`attendance_${cls.name}_${exportStartDate}_to_${exportEndDate}.csv`, csv);
-    setIsExportModalOpen(false);
+      const csv = Papa.unparse(csvData);
+      await exportCsvFile(`attendance_${cls.name}_${exportStartDate}_to_${exportEndDate}.csv`, csv);
+      setIsExportModalOpen(false);
+      toast.success('Attendance exported successfully');
+    } catch (error) {
+      console.error('Export failed', error);
+      toast.error('Failed to export attendance');
+    }
   };
 
   const handleAddStudent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (newStudentName.trim()) {
-      await api.addStudent(cls.id, newStudentName.trim());
-      setNewStudentName('');
-      setIsAdding(false);
-      loadStudents();
+      try {
+        await api.addStudent(cls.id, newStudentName.trim());
+        setNewStudentName('');
+        setIsAdding(false);
+        loadStudents();
+        toast.success('Student added successfully');
+      } catch (error: any) {
+        toast.error(error.message || 'Failed to add student');
+      }
     }
   };
 
   const handleDeleteStudent = async () => {
     if (studentToDelete) {
-      await api.deleteStudent(studentToDelete.id);
-      setStudentToDelete(null);
-      setSelectedStudents(prev => {
-        const next = new Set(prev);
-        next.delete(studentToDelete.id);
-        return next;
-      });
-      loadStudents();
+      try {
+        await api.deleteStudent(studentToDelete.id);
+        setStudentToDelete(null);
+        setSelectedStudents(prev => {
+          const next = new Set(prev);
+          next.delete(studentToDelete.id);
+          return next;
+        });
+        loadStudents();
+        toast.success('Student deleted successfully');
+      } catch (error: any) {
+        toast.error(error.message || 'Failed to delete student');
+      }
     }
   };
 
   const handleBulkDelete = async () => {
     if (selectedStudents.size > 0) {
-      await api.deleteStudentsBulk(Array.from(selectedStudents));
-      setSelectedStudents(new Set());
-      setIsBulkDeleting(false);
-      setIsDeleteMode(false);
-      loadStudents();
+      try {
+        await api.deleteStudentsBulk(Array.from(selectedStudents));
+        setSelectedStudents(new Set());
+        setIsBulkDeleting(false);
+        setIsDeleteMode(false);
+        loadStudents();
+        toast.success(`${selectedStudents.size} students deleted`);
+      } catch (error: any) {
+        toast.error(error.message || 'Failed to delete students');
+      }
     }
   };
 
@@ -126,15 +163,20 @@ export const ClassDetail: React.FC<ClassDetailProps> = ({ cls, onTakeAttendance 
         }
 
         if (names.length > 0) {
-          await api.addStudentsBulk(cls.id, names);
-          loadStudents();
-          setIsImportModalOpen(false);
+          try {
+            await api.addStudentsBulk(cls.id, names);
+            loadStudents();
+            setIsImportModalOpen(false);
+            toast.success(`Successfully imported ${names.length} students`);
+          } catch (error: any) {
+            toast.error(error.message || 'Failed to import students');
+          }
         } else {
-          alert('No valid names found in the first column of the file.');
+          toast.error('No valid names found in the first column of the file.');
         }
       } catch (error) {
         console.error('Error parsing file:', error);
-        alert('Failed to parse the file. Please ensure it is a valid Excel or CSV file.');
+        toast.error('Failed to parse the file. Please ensure it is a valid Excel or CSV file.');
       }
     };
     reader.readAsBinaryString(file);
@@ -165,12 +207,6 @@ export const ClassDetail: React.FC<ClassDetailProps> = ({ cls, onTakeAttendance 
     setStudentHistory(history);
   };
 
-  const sortedStudents = [...students].sort((a, b) => {
-    return sortOrder === 'asc' 
-      ? a.name.localeCompare(b.name)
-      : b.name.localeCompare(a.name);
-  });
-
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -187,59 +223,82 @@ export const ClassDetail: React.FC<ClassDetailProps> = ({ cls, onTakeAttendance 
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border border-black/5 overflow-hidden">
-        <div className="p-4 border-b border-black/5 flex flex-col sm:flex-row sm:items-center justify-between bg-black/[0.02] gap-4">
-          <div className="flex items-center justify-between sm:justify-start gap-4 w-full sm:w-auto">
-            <h3 className="font-semibold">Student Roster</h3>
-            {isDeleteMode && selectedStudents.size > 0 && (
+        <div className="p-4 border-b border-black/5 bg-black/[0.02] [0.02] flex flex-col gap-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center justify-between sm:justify-start gap-4 w-full sm:w-auto">
+              <h3 className="font-semibold">Student Roster</h3>
+              {isDeleteMode && selectedStudents.size > 0 && (
+                <button
+                  onClick={() => setIsBulkDeleting(true)}
+                  className="text-sm font-medium text-red-600 bg-red-50 px-4 py-2 rounded-lg hover:bg-red-100 transition-colors"
+                >
+                  Delete Selected ({selectedStudents.size})
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 w-full sm:w-auto">
               <button
-                onClick={() => setIsBulkDeleting(true)}
-                className="text-sm font-medium text-red-600 bg-red-50 px-4 py-2 rounded-lg hover:bg-red-100 transition-colors"
+                onClick={() => setIsExportModalOpen(true)}
+                className="justify-center bg-white border border-black/10 px-4 py-2.5 rounded-xl text-sm font-medium hover:bg-black/5 transition-colors flex items-center gap-2"
               >
-                Delete Selected ({selectedStudents.size})
+                <Download size={18} />
+                Export
+              </button>
+              <button
+                onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
+                className="justify-center bg-white border border-black/10 px-4 py-2.5 rounded-xl text-sm font-medium hover:bg-black/5 transition-colors flex items-center gap-2"
+              >
+                <ArrowUpDown size={18} />
+                Sort
+              </button>
+              <button
+                onClick={() => setIsImportModalOpen(true)}
+                className="justify-center bg-white border border-black/10 px-4 py-2.5 rounded-xl text-sm font-medium hover:bg-black/5 transition-colors flex items-center gap-2"
+              >
+                <Upload size={18} />
+                Import
+              </button>
+              <button
+                onClick={() => {
+                  setIsDeleteMode(!isDeleteMode);
+                  if (isDeleteMode) setSelectedStudents(new Set());
+                }}
+                className={`justify-center border px-4 py-2.5 rounded-xl text-sm font-medium transition-colors flex items-center gap-2 ${
+ isDeleteMode ? 'bg-red-50 border-red-200 text-red-600' : 'bg-white border-black/10 hover:bg-black/5'
+ }`}
+              >
+                <Trash2 size={18} />
+                {isDeleteMode ? 'Cancel' : 'Delete'}
+              </button>
+              <button
+                onClick={() => setIsAdding(true)}
+                className="justify-center bg-white border border-black/10 px-4 py-2.5 rounded-xl text-sm font-medium hover:bg-black/5 transition-colors flex items-center gap-2"
+              >
+                <UserPlus size={18} />
+                Add Student
+              </button>
+            </div>
+          </div>
+
+          <div className="relative group">
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-black/30 group-focus-within:text-indigo-500 transition-colors">
+              <Search size={18} />
+            </div>
+            <input
+              type="text"
+              placeholder="Search students..."
+              className="w-full bg-white border border-black/5 rounded-xl py-2.5 pl-10 pr-10 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm transition-all text-sm"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute inset-y-0 right-0 pr-3 flex items-center text-black/20 hover:text-black/40 transition-colors"
+              >
+                <X size={18} />
               </button>
             )}
-          </div>
-          <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 w-full sm:w-auto">
-            <button
-              onClick={() => setIsExportModalOpen(true)}
-              className="justify-center bg-white border border-black/10 px-4 py-2.5 rounded-xl text-sm font-medium hover:bg-black/5 transition-colors flex items-center gap-2"
-            >
-              <Download size={18} />
-              Export Attendance
-            </button>
-            <button
-              onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
-              className="justify-center bg-white border border-black/10 px-4 py-2.5 rounded-xl text-sm font-medium hover:bg-black/5 transition-colors flex items-center gap-2"
-            >
-              <ArrowUpDown size={18} />
-              Sort
-            </button>
-            <button
-              onClick={() => setIsImportModalOpen(true)}
-              className="justify-center bg-white border border-black/10 px-4 py-2.5 rounded-xl text-sm font-medium hover:bg-black/5 transition-colors flex items-center gap-2"
-            >
-              <Upload size={18} />
-              Import Name
-            </button>
-            <button
-              onClick={() => {
-                setIsDeleteMode(!isDeleteMode);
-                if (isDeleteMode) setSelectedStudents(new Set());
-              }}
-              className={`justify-center border px-4 py-2.5 rounded-xl text-sm font-medium transition-colors flex items-center gap-2 ${
-                isDeleteMode ? 'bg-red-50 border-red-200 text-red-600' : 'bg-white border-black/10 hover:bg-black/5'
-              }`}
-            >
-              <Trash2 size={18} />
-              {isDeleteMode ? 'Cancel' : 'Delete'}
-            </button>
-            <button
-              onClick={() => setIsAdding(true)}
-              className="justify-center bg-white border border-black/10 px-4 py-2.5 rounded-xl text-sm font-medium hover:bg-black/5 transition-colors flex items-center gap-2"
-            >
-              <UserPlus size={18} />
-              Add Student
-            </button>
           </div>
         </div>
 
@@ -289,7 +348,7 @@ export const ClassDetail: React.FC<ClassDetailProps> = ({ cls, onTakeAttendance 
               <p className="text-sm">Add them manually or import a file.</p>
             </div>
           ) : (
-            sortedStudents.map((student, index) => (
+            filteredStudents.map((student, index) => (
               <div key={student.id} className="p-4 flex items-center gap-3 group hover:bg-black/[0.01]">
                 {isDeleteMode && (
                   <div className="w-6 shrink-0 flex justify-center">
@@ -376,12 +435,15 @@ export const ClassDetail: React.FC<ClassDetailProps> = ({ cls, onTakeAttendance 
                   ) : (
                     <div className="space-y-3">
                       {studentHistory.map((record, i) => (
-                        <div key={i} className="flex flex-col p-3 rounded-xl border border-black/5 bg-gray-50/50">
+                        <div key={i} className="flex flex-col p-3 rounded-xl border border-black/5 bg-gray-50/50 [0.02]">
                           <div className="flex items-center justify-between mb-1">
-                            <span className="font-medium text-sm">{format(new Date(record.date), 'MMM d, yyyy')}</span>
+                            <div className="flex flex-col">
+                              <span className="font-medium text-sm">{format(new Date(record.date), 'MMM d, yyyy')}</span>
+                              <span className="text-[10px] uppercase font-bold text-black/40">{record.session_name}</span>
+                            </div>
                             <span className={`text-xs font-bold px-2 py-1 rounded-md ${
-                              record.status === 'present' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
-                            }`}>
+ record.status === 'present' ? 'bg-emerald-100 text-emerald-700 ' : 'bg-red-100 text-red-700 '
+ }`}>
                               {record.status.toUpperCase()}
                             </span>
                           </div>
