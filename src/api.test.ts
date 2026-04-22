@@ -50,9 +50,9 @@ describe('api.ts', () => {
   });
 
   it('saveAttendance should call db.saveAttendance, db.persist, and performDriveSync', async () => {
-    await api.saveAttendance(1, '2023-10-01', 'present', 'Notes');
+    await api.saveAttendance(1, '2023-10-01', 'present', 'Session 1', 'Notes');
     
-    expect(db.saveAttendance).toHaveBeenCalledWith(1, '2023-10-01', 'present', 'Notes');
+    expect(db.saveAttendance).toHaveBeenCalledWith(1, '2023-10-01', 'present', 'Session 1', 'Notes');
     expect(db.persist).toHaveBeenCalled();
     // Non-blocking sync is triggered
   });
