@@ -65,18 +65,23 @@ export const ClassDetail: React.FC<ClassDetailProps> = ({ cls, onTakeAttendance 
     try {
       const data = await api.getExportData(cls.id, exportStartDate, exportEndDate);
       
-      // Pivot data: Rows are students, Columns are dates
-      const datesSet = new Set<string>();
-      data.attendance.forEach(a => datesSet.add(a.date));
-      const dates = Array.from(datesSet).sort();
+      // Pivot data: Rows are students, Columns are dates + sessions
+      const sessionsSet = new Set<string>();
+      data.attendance.forEach((a) => sessionsSet.add(`${a.date} (${a.session_name})`));
+      const sessionHeaders = Array.from(sessionsSet).sort();
       
       const csvData = data.students.map(student => {
         const row: any = { 'Student Name': student.name };
-        dates.forEach(d => {
-          const record = data.attendance.find(a => a.student_id === student.id && a.date === d);
-          row[d] = record ? record.status.toUpperCase() : 'ABSENT';
+        sessionHeaders.forEach((header) => {
+          const [date, sessionPart] = header.split(' (');
+          const sessionName = sessionPart.replace(')', '');
+          
+          const record = data.attendance.find(
+            (a) => a.student_id === student.id && a.date === date && a.session_name === sessionName
+          );
+          row[header] = record ? record.status.toUpperCase() : 'ABSENT';
           if (record?.notes) {
-            row[`${d} Notes`] = record.notes;
+            row[`${header} Notes`] = record.notes;
           }
         });
         return row;
