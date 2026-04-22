@@ -182,6 +182,16 @@ export async function initDatabase(): Promise<void> {
   }
 
   db.run(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      class_id INTEGER NOT NULL,
+      date TEXT NOT NULL,
+      session_name TEXT NOT NULL,
+      UNIQUE(class_id, date, session_name)
+    )
+  `);
+
+  db.run(`
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -281,6 +291,7 @@ export function deleteClass(id: number): void {
       }
     }
     getDb().run('DELETE FROM students WHERE class_id = ?', [id]);
+    getDb().run('DELETE FROM sessions WHERE class_id = ?', [id]);
     getDb().run('DELETE FROM classes WHERE id = ?', [id]);
   } catch (err) {
     throw new DatabaseError('Failed to delete class', err);
@@ -420,21 +431,35 @@ export function getAttendanceByClassAndDate(classId: number, date: string, sessi
 
 export function getSessionsForDate(classId: number, date: string): string[] {
   try {
-    const stmt = getDb().prepare(`
-      SELECT DISTINCT session_name FROM attendance a
-      JOIN students s ON a.student_id = s.id
-      WHERE s.class_id = ? AND a.date = ?
+    const cid = sqlInt(classId);
+    const d = sqlStr(date);
+    const result = getDb().exec(`
+      SELECT DISTINCT session_name FROM (
+        SELECT session_name FROM sessions WHERE class_id = ${cid} AND date = ${d}
+        UNION
+        SELECT a.session_name FROM attendance a
+        JOIN students s ON a.student_id = s.id
+        WHERE s.class_id = ${cid} AND a.date = ${d}
+      )
+      ORDER BY session_name
     `);
-    stmt.bind([classId, date]);
-    const results: string[] = [];
-    while (stmt.step()) {
-      results.push(stmt.getAsObject().session_name as string);
+    if (result.length > 0 && result[0].values.length > 0) {
+      return result[0].values.map(row => row[0] as string);
     }
-    stmt.free();
-    // Always include at least "Session 1" if empty
-    return results.length > 0 ? results : ['Session 1'];
+    return ['Session 1'];
   } catch (err) {
     return ['Session 1'];
+  }
+}
+
+export function saveSession(classId: number, date: string, sessionName: string): void {
+  try {
+    getDb().exec(
+      `INSERT OR IGNORE INTO sessions (class_id, date, session_name)
+       VALUES (${sqlInt(classId)}, ${sqlStr(date)}, ${sqlStr(sessionName)})`
+    );
+  } catch (err) {
+    throw new DatabaseError('Failed to save session', err);
   }
 }
 

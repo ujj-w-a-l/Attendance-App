@@ -64,18 +64,24 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({ cls }) => {
     setSelectedStudents(new Set());
   };
 
-  const handleAddSession = () => {
+  const handleAddSession = async () => {
     const name = newSessionName.trim();
     if (!name) return;
     if (availableSessions.includes(name)) {
       toast.error('Session name already exists');
       return;
     }
-    setAvailableSessions(prev => [...prev, name]);
+    setAvailableSessions(prev => [...prev, name].sort());
     setSessionName(name);
     setNewSessionName('');
     setIsAddingSession(false);
-    toast.success(`Session "${name}" created`);
+    try {
+      await api.saveSession(cls.id, date, name);
+      toast.success(`Session "${name}" created`);
+    } catch (error) {
+      console.error('Failed to save session', error);
+      toast.error('Failed to save session');
+    }
   };
 
   const toggleStatus = async (studentId: number) => {

@@ -60,6 +60,11 @@ export const api = {
     return db.getSessionsForDate(classId, date);
   },
 
+  saveSession: async (classId: number, date: string, sessionName: string): Promise<void> => {
+    db.saveSession(classId, date, sessionName);
+    await db.persist();
+  },
+
   saveAttendance: async (
     student_id: number,
     date: string,
