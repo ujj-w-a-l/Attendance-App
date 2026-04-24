@@ -7,6 +7,7 @@ import { api } from '../api';
 import { isNativePlatform, showToast } from '../native-utils';
 import * as db from '../db';
 import { GoogleAuth } from '@codetrix-studio/capacitor-google-auth';
+import { toast } from 'sonner';
 
 interface ClassListProps {
   classes: Class[];
@@ -60,12 +61,13 @@ export const ClassList: React.FC<ClassListProps> = ({ classes, onSelectClass, on
           await db.persist();
           setIsAuthenticated(true);
           await showToast('Connected to Google Drive');
+          toast.success('Connected to Google Drive');
         }
       } else {
         // Web fallback: use the Google Identity Services popup
         const clientId = (window as any).__GOOGLE_CLIENT_ID__;
         if (!clientId) {
-          alert('Google Client ID not configured. Please set VITE_GOOGLE_CLIENT_ID in your environment.');
+          toast.error('Google Client ID not configured. Please set VITE_GOOGLE_CLIENT_ID in your environment.');
           return;
         }
 
@@ -78,6 +80,7 @@ export const ClassList: React.FC<ClassListProps> = ({ classes, onSelectClass, on
               db.setSetting('google_tokens', JSON.stringify(tokens));
               await db.persist();
               setIsAuthenticated(true);
+              toast.success('Connected to Google Drive');
             }
           },
         });
@@ -85,7 +88,7 @@ export const ClassList: React.FC<ClassListProps> = ({ classes, onSelectClass, on
         if (tokenClient) {
           tokenClient.requestAccessToken();
         } else {
-          alert('Google Identity Services not loaded. Please check your internet connection.');
+          toast.error('Google Identity Services not loaded. Please check your internet connection.');
         }
       }
     } catch (error: any) {
@@ -93,9 +96,8 @@ export const ClassList: React.FC<ClassListProps> = ({ classes, onSelectClass, on
       const message = error?.message || 'Failed to connect to Google. Please try again.';
       if (isNativePlatform()) {
         await showToast(message, 'long');
-      } else {
-        alert(message);
       }
+      toast.error(message);
     }
   };
 
@@ -154,9 +156,8 @@ export const ClassList: React.FC<ClassListProps> = ({ classes, onSelectClass, on
       const message = error?.message || 'Failed to add class. Please try again.';
       if (isNativePlatform()) {
         await showToast(message, 'long');
-      } else {
-        alert(message);
       }
+      toast.error(message);
     }
   };
 

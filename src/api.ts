@@ -65,6 +65,11 @@ export const api = {
     await db.persist();
   },
 
+  saveSessionsBulk: async (classId: number, date: string, sessionNames: string[]): Promise<void> => {
+    db.saveSessionsBulk(classId, date, sessionNames);
+    await db.persist();
+  },
+
   saveAttendance: async (
     student_id: number,
     date: string,

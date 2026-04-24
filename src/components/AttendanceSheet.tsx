@@ -71,12 +71,17 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({ cls }) => {
       toast.error('Session name already exists');
       return;
     }
-    setAvailableSessions(prev => [...prev, name].sort());
+    // Build the full new list before any state update so we can persist it all at once.
+    // This includes existing sessions (e.g. the default 'Session 1' that was never saved
+    // to DB) so that getSessionsForDate returns all of them after the re-load triggered
+    // by setSessionName below.
+    const newList = [...availableSessions, name].sort();
+    setAvailableSessions(newList);
     setSessionName(name);
     setNewSessionName('');
     setIsAddingSession(false);
     try {
-      await api.saveSession(cls.id, date, name);
+      await api.saveSessionsBulk(cls.id, date, newList);
       toast.success(`Session "${name}" created`);
     } catch (error) {
       console.error('Failed to save session', error);

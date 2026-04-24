@@ -283,16 +283,16 @@ export function addClass(name: string): ClassRow {
 export function deleteClass(id: number): void {
   try {
     // Manual cascade since sql.js PRAGMA foreign_keys may not be reliable
-    const students = getDb().exec('SELECT id FROM students WHERE class_id = ?', [id]);
+    const students = getDb().exec(`SELECT id FROM students WHERE class_id = ${sqlInt(id)}`);
     if (students.length > 0 && students[0].values.length > 0) {
       const studentIds = students[0].values.map(row => row[0] as number);
       for (const sid of studentIds) {
-        getDb().run('DELETE FROM attendance WHERE student_id = ?', [sid]);
+        getDb().exec(`DELETE FROM attendance WHERE student_id = ${sqlInt(sid)}`);
       }
     }
-    getDb().run('DELETE FROM students WHERE class_id = ?', [id]);
-    getDb().run('DELETE FROM sessions WHERE class_id = ?', [id]);
-    getDb().run('DELETE FROM classes WHERE id = ?', [id]);
+    getDb().exec(`DELETE FROM students WHERE class_id = ${sqlInt(id)}`);
+    getDb().exec(`DELETE FROM sessions WHERE class_id = ${sqlInt(id)}`);
+    getDb().exec(`DELETE FROM classes WHERE id = ${sqlInt(id)}`);
   } catch (err) {
     throw new DatabaseError('Failed to delete class', err);
   }
@@ -358,8 +358,8 @@ export function addStudentsBulk(classId: number, names: string[]): void {
 
 export function deleteStudent(id: number): void {
   try {
-    getDb().run('DELETE FROM attendance WHERE student_id = ?', [id]);
-    getDb().run('DELETE FROM students WHERE id = ?', [id]);
+    getDb().exec(`DELETE FROM attendance WHERE student_id = ${sqlInt(id)}`);
+    getDb().exec(`DELETE FROM students WHERE id = ${sqlInt(id)}`);
   } catch (err) {
     throw new DatabaseError('Failed to delete student', err);
   }
@@ -370,8 +370,8 @@ export function deleteStudentsBulk(ids: number[]): void {
   try {
     database.exec('BEGIN TRANSACTION');
     for (const id of ids) {
-      database.run('DELETE FROM attendance WHERE student_id = ?', [id]);
-      database.run('DELETE FROM students WHERE id = ?', [id]);
+      database.exec(`DELETE FROM attendance WHERE student_id = ${sqlInt(id)}`);
+      database.exec(`DELETE FROM students WHERE id = ${sqlInt(id)}`);
     }
     database.exec('COMMIT');
   } catch (err) {
@@ -460,6 +460,25 @@ export function saveSession(classId: number, date: string, sessionName: string):
     );
   } catch (err) {
     throw new DatabaseError('Failed to save session', err);
+  }
+}
+
+export function saveSessionsBulk(classId: number, date: string, sessionNames: string[]): void {
+  const cid = sqlInt(classId);
+  const d = sqlStr(date);
+  const database = getDb();
+  try {
+    database.exec('BEGIN TRANSACTION');
+    for (const name of sessionNames) {
+      database.exec(
+        `INSERT OR IGNORE INTO sessions (class_id, date, session_name)
+         VALUES (${cid}, ${d}, ${sqlStr(name)})`
+      );
+    }
+    database.exec('COMMIT');
+  } catch (err) {
+    database.exec('ROLLBACK');
+    throw new DatabaseError('Failed to save sessions in bulk', err);
   }
 }
 
