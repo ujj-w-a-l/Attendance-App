@@ -113,33 +113,38 @@ export const ClassDetail: React.FC<ClassDetailProps> = ({ cls, onTakeAttendance 
 
   const handleDeleteStudent = async () => {
     if (studentToDelete) {
+      const id = studentToDelete.id;
+      setStudentToDelete(null);
       try {
-        await api.deleteStudent(studentToDelete.id);
-        setStudentToDelete(null);
+        await api.deleteStudent(id);
+        setStudents(prev => prev.filter(s => s.id !== id));
         setSelectedStudents(prev => {
           const next = new Set(prev);
-          next.delete(studentToDelete.id);
+          next.delete(id);
           return next;
         });
-        loadStudents();
         toast.success('Student deleted successfully');
       } catch (error: any) {
         toast.error(error.message || 'Failed to delete student');
+        loadStudents();
       }
     }
   };
 
   const handleBulkDelete = async () => {
     if (selectedStudents.size > 0) {
+      const ids = new Set(selectedStudents);
+      const count = ids.size;
+      setSelectedStudents(new Set());
+      setIsBulkDeleting(false);
+      setIsDeleteMode(false);
       try {
-        await api.deleteStudentsBulk(Array.from(selectedStudents));
-        setSelectedStudents(new Set());
-        setIsBulkDeleting(false);
-        setIsDeleteMode(false);
-        loadStudents();
-        toast.success(`${selectedStudents.size} students deleted`);
+        await api.deleteStudentsBulk(Array.from(ids));
+        setStudents(prev => prev.filter(s => !ids.has(s.id)));
+        toast.success(`${count} students deleted`);
       } catch (error: any) {
         toast.error(error.message || 'Failed to delete students');
+        loadStudents();
       }
     }
   };
