@@ -463,6 +463,25 @@ export function saveSession(classId: number, date: string, sessionName: string):
   }
 }
 
+export function saveSessionsBulk(classId: number, date: string, sessionNames: string[]): void {
+  const cid = sqlInt(classId);
+  const d = sqlStr(date);
+  const database = getDb();
+  try {
+    database.exec('BEGIN TRANSACTION');
+    for (const name of sessionNames) {
+      database.exec(
+        `INSERT OR IGNORE INTO sessions (class_id, date, session_name)
+         VALUES (${cid}, ${d}, ${sqlStr(name)})`
+      );
+    }
+    database.exec('COMMIT');
+  } catch (err) {
+    database.exec('ROLLBACK');
+    throw new DatabaseError('Failed to save sessions in bulk', err);
+  }
+}
+
 export function saveAttendance(
   studentId: number,
   date: string,
